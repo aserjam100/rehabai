@@ -33,24 +33,38 @@ const POSITION_LANDMARKS = [11, 12, 23, 24, 25, 26, 27, 28];
 const VISIBILITY_THRESHOLD = 0.5;
 const POSITION_HOLD_MS = 2000;
 const COUNTDOWN_MS = 3000;
-const KNEE_UP_THRESHOLD = 150;   // degrees -- leg counted as extended (top of rep)
-const KNEE_DOWN_THRESHOLD = 100; // degrees -- leg counted as back at rest
+// Camera angle changes what a bent knee's 2D projected angle reads as (see
+// CLAUDE.md: 2D-only, no z), so the up/down thresholds are calibrated per
+// session from the actual rest angle measured during the position hold,
+// rather than hardcoded. HYSTERESIS_MARGIN sets the gap between them.
+const HYSTERESIS_MARGIN = 10;    // degrees below the calibrated rest ceiling for the down-reset
+const DEFAULT_UP_THRESHOLD = 145; // fallback if calibration somehow produced nothing
 
 let appState = 'positioning'; // 'positioning' | 'countdown' | 'active'
 let positionStableSince = null;
 let countdownStart = null;
+let restAngleMax = null;
+let kneeUpThreshold = null;
+let kneeDownThreshold = null;
 let repState = 'down';
 let repCount = 0;
 let currentAngle = null;
 
 function angleDegrees(a, b, c) {
-  // angle at b formed by a-b-c, x/y only -- z is monocular noise, ignored per project rules.
-  const v1x = a.x - b.x, v1y = a.y - b.y;
-  const v2x = c.x - b.x, v2y = c.y - b.y;
-  const mag1 = Math.hypot(v1x, v1y);
-  const mag2 = Math.hypot(v2x, v2y);
+  // angle at b formed by a-b-c, using x/y/z.
+  // Deliberate deviation from CLAUDE.md's "ignore z" rule: at steep webcam
+  // lid angles (~80-90 degrees), the thigh foreshortens in the 2D
+  // projection and bent vs. straight becomes indistinguishable no matter
+  // how thresholds are tuned. z restores the depth component that carries
+  // that information. Still three landmarks, still one dot product, still
+  // no classifier -- only the vector dimensionality changed.
+  const v1x = a.x - b.x, v1y = a.y - b.y, v1z = a.z - b.z;
+  const v2x = c.x - b.x, v2y = c.y - b.y, v2z = c.z - b.z;
+  const mag1 = Math.hypot(v1x, v1y, v1z);
+  const mag2 = Math.hypot(v2x, v2y, v2z);
   if (mag1 === 0 || mag2 === 0) return null;
-  const cos = Math.min(1, Math.max(-1, (v1x * v2x + v1y * v2y) / (mag1 * mag2)));
+  const dot = v1x * v2x + v1y * v2y + v1z * v2z;
+  const cos = Math.min(1, Math.max(-1, dot / (mag1 * mag2)));
   return Math.acos(cos) * (180 / Math.PI);
 }
 
@@ -65,7 +79,14 @@ function isPositioned(landmarks) {
 function updateExercise(landmarks, now) {
   if (appState === 'positioning') {
     if (landmarks && isPositioned(landmarks)) {
-      if (positionStableSince === null) positionStableSince = now;
+      if (positionStableSince === null) {
+        positionStableSince = now;
+        restAngleMax = null; // fresh calibration for this hold
+      }
+      const angle = angleDegrees(landmarks[HIP], landmarks[KNEE], landmarks[ANKLE]);
+      if (angle !== null) {
+        restAngleMax = restAngleMax === null ? angle : Math.max(restAngleMax, angle);
+      }
       if (now - positionStableSince >= POSITION_HOLD_MS) {
         appState = 'countdown';
         countdownStart = now;
@@ -79,8 +100,16 @@ function updateExercise(landmarks, now) {
   if (appState === 'countdown') {
     if (now - countdownStart >= COUNTDOWN_MS) {
       appState = 'active';
-      repState = 'down';
       repCount = 0;
+      kneeUpThreshold = restAngleMax !== null ? restAngleMax : DEFAULT_UP_THRESHOLD;
+      kneeDownThreshold = kneeUpThreshold - HYSTERESIS_MARGIN;
+      // Start from whichever side of the range the leg actually is at --
+      // don't assume 'down', or an already-extended leg forces a spurious
+      // extra half-cycle before the first real rep can count.
+      const startAngle = landmarks
+        ? angleDegrees(landmarks[HIP], landmarks[KNEE], landmarks[ANKLE])
+        : null;
+      repState = startAngle !== null && startAngle > kneeUpThreshold ? 'up' : 'down';
     }
     return;
   }
@@ -91,9 +120,9 @@ function updateExercise(landmarks, now) {
   if (angle === null) return;
   currentAngle = angle;
 
-  if (repState === 'down' && angle > KNEE_UP_THRESHOLD) {
+  if (repState === 'down' && angle > kneeUpThreshold) {
     repState = 'up';
-  } else if (repState === 'up' && angle < KNEE_DOWN_THRESHOLD) {
+  } else if (repState === 'up' && angle < kneeDownThreshold) {
     repState = 'down';
     repCount++;
   }
@@ -108,7 +137,7 @@ function statusText() {
     const n = Math.ceil(remaining / 1000);
     return n > 0 ? String(n) : 'GO';
   }
-  return `reps: ${repCount}  angle: ${currentAngle !== null ? currentAngle.toFixed(1) : '--'}  state: ${repState}`;
+  return `reps: ${repCount}  angle: ${currentAngle !== null ? currentAngle.toFixed(1) : '--'}  state: ${repState}  (up>${kneeUpThreshold.toFixed(0)} down<${kneeDownThreshold.toFixed(0)})`;
 }
 
 window.addEventListener('error', (e) => {
@@ -135,16 +164,36 @@ async function init() {
   });
 
   statusEl.textContent = 'requesting camera...';
-  const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+  });
   video.srcObject = stream;
 
   video.addEventListener('loadeddata', () => {
+    // Canvas pixel buffer stays at native capture resolution -- landmark
+    // math and drawing both happen in that space. Display size (below) is
+    // a separate CSS scale-up so it's readable from 2m away; it doesn't
+    // affect coordinates since video and canvas are scaled identically.
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    video.width = video.videoWidth;
-    video.height = video.videoHeight;
-    stage.style.width = video.videoWidth + 'px';
-    stage.style.height = video.videoHeight + 'px';
+
+    const availableW = window.innerWidth - 40;
+    const availableH = window.innerHeight - 80;
+    const scale = Math.min(
+      availableW / video.videoWidth,
+      availableH / video.videoHeight,
+      1.6
+    );
+    const displayW = Math.round(video.videoWidth * scale);
+    const displayH = Math.round(video.videoHeight * scale);
+
+    stage.style.width = displayW + 'px';
+    stage.style.height = displayH + 'px';
+    video.style.width = displayW + 'px';
+    video.style.height = displayH + 'px';
+    canvas.style.width = displayW + 'px';
+    canvas.style.height = displayH + 'px';
+
     statusEl.textContent = 'running';
     requestAnimationFrame(renderLoop);
   });

@@ -236,8 +236,21 @@ keyframe data.
 
 **Ignore `z`.** Monocular depth is noise. 2D only.
 
+**Exception (rep-counting angle math only):** at steep webcam lid angles
+(~80-90 degrees), the thigh foreshortens in the 2D projection and a bent
+vs. straight knee become indistinguishable no matter how thresholds are
+tuned — confirmed by testing. `angleDegrees()` in `renderer.js` uses
+x/y/z for this reason. Everything else (stick figure drawing, keyframe
+interpolation, any future landmark math) stays 2D-only.
+
 **Angles.** Three landmarks, dot product, degrees. That is the entire
 "pose estimation". No classifier.
+
+**Rep thresholds are calibrated, not hardcoded.** During the 2-second
+position hold, the max knee angle observed at rest becomes the session's
+`up` threshold; `down` is 10 degrees below it (`HYSTERESIS_MARGIN`). This
+adapts to whatever camera angle is actually in use instead of assuming a
+fixed rest angle.
 
 **Mirroring.** The `#stage` container (holds both `<video>` and the overlay
 `<canvas>`) is CSS-flipped with `transform: scaleX(-1)`, so the feed behaves
