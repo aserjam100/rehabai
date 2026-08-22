@@ -37,14 +37,42 @@
       z-index: 10;
       white-space: pre;
     }
+    #dashboard {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      color: #0f0;
+      background: #000;
+      font: bold 28px monospace;
+      padding: 10px 16px;
+      z-index: 10;
+      white-space: pre;
+    }
+    #stopBtn {
+      display: none;
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      min-width: 200px;
+      min-height: 80px;
+      font: bold 28px sans-serif;
+      background: #c00;
+      color: #fff;
+      border: none;
+      z-index: 20;
+    }
   </style>
 </head>
 <body>
   <div id="status">starting...</div>
+  <div id="dashboard"></div>
   <div id="stage">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="overlay"></canvas>
   </div>
+  <button id="stopBtn">STOP</button>
   <script type="module" src="renderer.js"></script>
 </body>
 </html>

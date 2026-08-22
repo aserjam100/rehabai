@@ -23,9 +23,13 @@ const canvas = document.getElementById('overlay');
 const stage = document.getElementById('stage');
 const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
+const dashboardEl = document.getElementById('dashboard');
+const stopBtn = document.getElementById('stopBtn');
 
 let poseLandmarker;
 let lastVideoTime = -1;
+let mediaStream = null;
+let running = true;
 
 // --- Step 2: seated knee extension (right leg: hip 24, knee 26, ankle 28) ---
 const HIP = 24, KNEE = 26, ANKLE = 28;
@@ -49,6 +53,14 @@ let kneeDownThreshold = null;
 let repState = 'down';
 let repCount = 0;
 let currentAngle = null;
+
+// --- Step 3: dashboard + session log ---
+const sessionLog = []; // { n, minAngle, maxAngle, durationSec }
+let bestAngle = null;
+let formStatus = '--';
+let repStartTime = null;
+let currentRepMinAngle = null;
+let currentRepMaxAngle = null;
 
 function angleDegrees(a, b, c) {
   // angle at b formed by a-b-c, using x/y/z.
@@ -110,6 +122,9 @@ function updateExercise(landmarks, now) {
         ? angleDegrees(landmarks[HIP], landmarks[KNEE], landmarks[ANKLE])
         : null;
       repState = startAngle !== null && startAngle > kneeUpThreshold ? 'up' : 'down';
+      repStartTime = now;
+      currentRepMinAngle = startAngle;
+      currentRepMaxAngle = startAngle;
     }
     return;
   }
@@ -120,25 +135,97 @@ function updateExercise(landmarks, now) {
   if (angle === null) return;
   currentAngle = angle;
 
+  currentRepMinAngle = currentRepMinAngle === null ? angle : Math.min(currentRepMinAngle, angle);
+  currentRepMaxAngle = currentRepMaxAngle === null ? angle : Math.max(currentRepMaxAngle, angle);
+  bestAngle = bestAngle === null ? angle : Math.max(bestAngle, angle);
+
   if (repState === 'down' && angle > kneeUpThreshold) {
     repState = 'up';
   } else if (repState === 'up' && angle < kneeDownThreshold) {
     repState = 'down';
     repCount++;
+
+    const durationSec = (now - repStartTime) / 1000;
+    const entry = { n: repCount, minAngle: currentRepMinAngle, maxAngle: currentRepMaxAngle, durationSec };
+    sessionLog.push(entry);
+    console.log('rep complete:', entry, 'sessionLog:', sessionLog);
+
+    formStatus = currentRepMaxAngle >= bestAngle - HYSTERESIS_MARGIN ? 'Good' : 'Try to straighten more';
+
+    repStartTime = now;
+    currentRepMinAngle = angle;
+    currentRepMaxAngle = angle;
   }
+}
+
+function dashboardText() {
+  const angleStr = currentAngle !== null ? currentAngle.toFixed(0) + ' deg' : '--';
+  const bestStr = bestAngle !== null ? bestAngle.toFixed(0) + ' deg' : '--';
+  return `REPS: ${repCount}\nANGLE: ${angleStr}\nBEST: ${bestStr}\nFORM: ${formStatus}`;
 }
 
 function statusText() {
   if (appState === 'positioning') {
     return 'Please sit facing the camera';
   }
-  if (appState === 'countdown') {
-    const remaining = Math.max(0, COUNTDOWN_MS - (performance.now() - countdownStart));
-    const n = Math.ceil(remaining / 1000);
-    return n > 0 ? String(n) : 'GO';
-  }
-  return `reps: ${repCount}  angle: ${currentAngle !== null ? currentAngle.toFixed(1) : '--'}  state: ${repState}  (up>${kneeUpThreshold.toFixed(0)} down<${kneeDownThreshold.toFixed(0)})`;
+  // appState === 'countdown'
+  const remaining = Math.max(0, COUNTDOWN_MS - (performance.now() - countdownStart));
+  const n = Math.ceil(remaining / 1000);
+  return n > 0 ? String(n) : 'GO';
 }
+
+// --- Step 4: format sessionLog into labelled English for Gemma ---
+function formatSessionSummary(log) {
+  if (log.length === 0) return 'No reps were completed this session.';
+
+  const roms = log.map((r) => r.maxAngle - r.minAngle);
+  const bestRom = Math.max(...roms);
+  const bestRep = log.reduce((a, b) => (b.maxAngle > a.maxAngle ? b : a));
+  const weakestRep = log.reduce((a, b) => (b.maxAngle < a.maxAngle ? b : a));
+  const avgMaxAngle = log.reduce((sum, r) => sum + r.maxAngle, 0) / log.length;
+
+  const lines = [];
+  lines.push(`Completed ${log.length} rep${log.length === 1 ? '' : 's'} of seated knee extension.`);
+  lines.push(
+    `Knee straightened furthest on rep ${bestRep.n} (${bestRep.maxAngle.toFixed(0)} degrees, ` +
+    `compared to ${avgMaxAngle.toFixed(0)} degrees average).`
+  );
+  lines.push(`Rep ${weakestRep.n} was weakest at ${weakestRep.maxAngle.toFixed(0)} degrees.`);
+
+  for (const r of log) {
+    const rom = r.maxAngle - r.minAngle;
+    if (rom < bestRom * 0.85) {
+      lines.push(
+        `Rep ${r.n} had a range of motion of ${rom.toFixed(0)} degrees, ` +
+        `more than 15% below the best rep's range of motion of ${bestRom.toFixed(0)} degrees.`
+      );
+    }
+  }
+
+  return lines.join(' ');
+}
+
+async function stopSession() {
+  running = false;
+  if (mediaStream) {
+    for (const track of mediaStream.getTracks()) track.stop();
+  }
+  stopBtn.style.display = 'none';
+  dashboardEl.style.display = 'none';
+  statusEl.style.display = 'block';
+  statusEl.textContent = 'Generating report...';
+
+  const summary = formatSessionSummary(sessionLog);
+  try {
+    await window.rehabAPI.generateReport(summary);
+    // On success the window navigates to the report page itself, so no
+    // further status update runs here -- this renderer context is gone.
+  } catch (err) {
+    statusEl.textContent = 'ERROR generating report: ' + err.message;
+  }
+}
+
+stopBtn.addEventListener('click', stopSession);
 
 window.addEventListener('error', (e) => {
   statusEl.textContent = 'ERROR: ' + e.message;
@@ -164,10 +251,10 @@ async function init() {
   });
 
   statusEl.textContent = 'requesting camera...';
-  const stream = await navigator.mediaDevices.getUserMedia({
+  mediaStream = await navigator.mediaDevices.getUserMedia({
     video: { width: { ideal: 1280 }, height: { ideal: 720 } },
   });
-  video.srcObject = stream;
+  video.srcObject = mediaStream;
 
   video.addEventListener('loadeddata', () => {
     // Canvas pixel buffer stays at native capture resolution -- landmark
@@ -195,11 +282,13 @@ async function init() {
     canvas.style.height = displayH + 'px';
 
     statusEl.textContent = 'running';
+    stopBtn.style.display = 'block';
     requestAnimationFrame(renderLoop);
   });
 }
 
 function renderLoop() {
+  if (!running) return;
   // detectForVideo requires strictly increasing timestamps.
   if (video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
@@ -208,7 +297,15 @@ function renderLoop() {
     const landmarks = result.landmarks && result.landmarks[0];
     draw(result);
     updateExercise(landmarks, now);
-    statusEl.textContent = statusText();
+    if (appState === 'active') {
+      statusEl.style.display = 'none';
+      dashboardEl.style.display = 'block';
+      dashboardEl.textContent = dashboardText();
+    } else {
+      dashboardEl.style.display = 'none';
+      statusEl.style.display = 'block';
+      statusEl.textContent = statusText();
+    }
   }
   requestAnimationFrame(renderLoop);
 }

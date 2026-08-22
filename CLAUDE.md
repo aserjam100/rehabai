@@ -42,7 +42,7 @@ It does NOT prescribe exercise. Use that language in any UI copy.
 | Pose | `@mediapipe/tasks-vision`, JS |
 | Render | HTML5 canvas |
 | LLM | Gemma via Ollama, `http://localhost:11434` |
-| Report | HTML file on disk, opened with `shell.openPath` |
+| Report | HTML file on disk, loaded into the same Electron window (`webContents.loadFile`) |
 | State | Plain JS objects + one JSON config file |
 
 Do NOT suggest or introduce: React, TypeScript, React Native, a bundler,
@@ -145,7 +145,7 @@ Rehearse twice on the demo machine.
 |---|---|
 | Greeting | One large **START** button. Small speaker icon to replay. |
 | Exercise | One large **STOP** button. Dashboard overlay. Nothing else. |
-| Report | Opens in browser. No controls. |
+| Report | Opens in the same window. One **PRINT REPORT** button. |
 
 Exercise selection: three large tiles on the greeting screen, or cycle
 through all three in one session. Your call — whichever is less code.
