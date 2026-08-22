@@ -1,7 +1,10 @@
+// Vendored locally (not the jsdelivr CDN) so pose detection works with no
+// internet connection -- npm-installed like any other dependency, same
+// one-time-setup-needs-network category as installing electron itself.
 import {
   PoseLandmarker,
   FilesetResolver,
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+} from "./node_modules/@mediapipe/tasks-vision/vision_bundle.mjs";
 import { LANGUAGES, LANGUAGE_NAMES, STRINGS } from "./i18n.js";
 
 // BCP-47 tags so speechSynthesis picks a matching voice where the OS has one.
@@ -978,14 +981,15 @@ window.addEventListener('unhandledrejection', (e) => {
 
 async function init() {
   statusEl.textContent = 'loading pose model...';
+  // Both paths are local (see the vendored import above and
+  // assets/models/) -- no network call happens here, so this works offline.
   const vision = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+    "./node_modules/@mediapipe/tasks-vision/wasm"
   );
 
   poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
     baseOptions: {
-      modelAssetPath:
-        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+      modelAssetPath: "./assets/models/pose_landmarker_lite.task",
       delegate: "GPU",
     },
     runningMode: "VIDEO",
