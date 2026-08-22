@@ -155,6 +155,38 @@ highlights as position/countdown/active state and active leg change.
 Seated arm raise, sit-to-stand. Config only: landmark triple, thresholds,
 demo images (see Step 6 amendment), form-cue text. If this needs new
 code, step 2 was written wrong — tell me.
+
+**AMENDED:** this did need new code, flagged to the user rather than
+silently absorbed — Step 2's alternating-leg amendment had hard-coded the
+knee's landmark triple and left/right handoff directly into
+`updateExercise()`/`legAngle()`, so Steps 2's own "config only" premise no
+longer held once a second and third exercise needed to share that state
+machine. Generalized into an `EXERCISES` config object in `renderer.js`
+(id, `mode`, landmark `triples`, `positionLandmarks`, `images`,
+`tryHarderKey`) with one shared calibrated-threshold state machine driving
+all three via two mode branches:
+- `'alternating'` (knee extension only) — unchanged from the Step 2
+  amendment: one side at a time, hands off after each rep.
+- `'bilateral'` (arm raise, sit-to-stand — new) — both sides move
+  together, tracked as the average of left+right angle, no side handoff,
+  no `side` field on log entries. Both new exercises' landmark triples
+  are anchor-joint-distal (hip-shoulder-wrist; shoulder-hip-knee) chosen
+  so the angle still reads low-at-rest/high-at-top like the knee's, so no
+  per-exercise direction flag was needed either.
+
+Exercise picker resolves the "Exercise selection" line below in favor of
+three tiles on the greeting screen (see the Controls table's updated
+row) — chosen over cycling through all three since a tap-to-start tile
+is less code than a cycling flow and matches "one tap, fewer things on
+screen." `formatSessionSummary()` branches on `mode` too: alternating
+gets the existing per-leg/asymmetry breakdown, bilateral gets a plain
+best-rep/weakest-rep summary with no side breakdown (not meaningful when
+both sides are tracked as one averaged number).
+
+Arm raise and sit-to-stand images are **not yet supplied** — same
+external-asset flow as Step 6 (user-generated, dropped into
+`assets/exercises/*.png`, app never fetches them) — `placeholderImage()`
+fallback covers the gap until then.
 **Verify:** all three work.
 
 ### T+3:30 — Step 8: UI pass
@@ -169,12 +201,13 @@ Rehearse twice on the demo machine.
 
 | Screen | Controls |
 |---|---|
-| Greeting | Language + age picker (first run) + One large **START** button. Small speaker icon to replay. Returning users with 1+ sessions also see a small progress chart (see exceptions below). |
+| Greeting | Language + age picker (first run) + One large **START** button (submits the profile only; see Step 7 amendment). Once a profile exists, START is replaced by three exercise tiles — tapping one both selects and starts that exercise. Small speaker icon to replay. Returning users with 1+ sessions also see a small progress chart (see exceptions below). |
 | Exercise | One large **STOP** button. Dashboard overlay. Demo image panel beside the live feed (see Step 6 amendment). |
 | Report | Opens in the same window. **PRINT REPORT** and **HOME** buttons. |
 
-Exercise selection: three large tiles on the greeting screen, or cycle
-through all three in one session. Your call — whichever is less code.
+Exercise selection: three large tiles on the greeting screen (resolved by
+the Step 7 amendment above — chosen over cycling through all three since
+it's the less-code option per this line's own original call).
 
 **Sizing:** buttons min 200x80px. Body text min 20px. Labels min 28px.
 Operable from 2m away.

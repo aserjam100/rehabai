@@ -157,6 +157,25 @@
       background: var(--muted);
       cursor: not-allowed;
     }
+    /* Exercise picker -- replaces the single START button for anyone past
+       onboarding (see CLAUDE.md's "three large tiles" option under
+       Controls). Tapping a tile both selects and starts that exercise in
+       one tap -- there's no separate confirm step. */
+    #exerciseTiles {
+      display: none;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .exerciseTile {
+      min-width: 200px;
+      min-height: 80px;
+      font: bold 22px sans-serif;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      cursor: pointer;
+    }
     #replayBtn {
       display: none;
       min-width: 60px;
@@ -318,6 +337,11 @@
       <div id="progressCaption"></div>
     </div>
     <button id="startBtn" disabled>START</button>
+    <div id="exerciseTiles">
+      <button class="exerciseTile" data-exercise="kneeExtension"></button>
+      <button class="exerciseTile" data-exercise="armRaise"></button>
+      <button class="exerciseTile" data-exercise="sitToStand"></button>
+    </div>
     <button id="replayBtn" title="Replay greeting">&#128266;</button>
   </div>
 
@@ -333,7 +357,7 @@
         <img id="demoRight" class="demoImg" alt="" />
         <div class="demoLabel" id="demoRightLabel"></div>
       </div>
-      <div class="demoItem">
+      <div class="demoItem" id="demoLeftItem">
         <img id="demoLeft" class="demoImg" alt="" />
         <div class="demoLabel" id="demoLeftLabel"></div>
       </div>
