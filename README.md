@@ -50,8 +50,10 @@ npm install
 npm start
 ```
 
-For the session report step, [Ollama](https://ollama.com) must be running
-locally with the `gemma4:e2b` model pulled:
+On launch, the app checks whether [Ollama](https://ollama.com) is running
+and starts `ollama serve` itself if not, showing "Starting Ollama..." /
+"Starting Gemma..." on the greeting screen while it comes up. The
+`gemma4:e2b` model still needs to be pulled beforehand:
 
 ```
 ollama pull gemma4:e2b
