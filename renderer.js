@@ -25,11 +25,77 @@ const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
 const dashboardEl = document.getElementById('dashboard');
 const stopBtn = document.getElementById('stopBtn');
+const exerciseScreenEl = document.getElementById('exerciseScreen');
+const greetingEl = document.getElementById('greeting');
+const greetingTextEl = document.getElementById('greetingText');
+const nameInputEl = document.getElementById('nameInput');
+const startBtn = document.getElementById('startBtn');
+const replayBtn = document.getElementById('replayBtn');
+const resetBtn = document.getElementById('resetBtn');
 
 let poseLandmarker;
 let lastVideoTime = -1;
 let mediaStream = null;
 let running = true;
+
+// --- Step 5: greeting, local config, reset ---
+let userConfig = null;
+let greetingSpeechText = '';
+
+function buildGreetingText(config) {
+  const hour = new Date().getHours();
+  const timeGreeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  let text = `${timeGreeting}, ${config.name}.`;
+  if (config.lastSessionReps) {
+    text += ` Last time you did ${config.lastSessionReps} reps.`;
+  }
+  text += ' Ready for today?';
+  return text;
+}
+
+function speak(text) {
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+}
+
+async function initGreeting() {
+  userConfig = await window.rehabAPI.loadConfig();
+
+  if (!userConfig || !userConfig.name) {
+    greetingTextEl.textContent = 'What should we call you?';
+    nameInputEl.style.display = 'block';
+    replayBtn.style.display = 'none';
+    return;
+  }
+
+  greetingSpeechText = buildGreetingText(userConfig);
+  greetingTextEl.textContent = greetingSpeechText;
+  nameInputEl.style.display = 'none';
+  replayBtn.style.display = 'inline-block';
+  speak(greetingSpeechText);
+}
+
+startBtn.addEventListener('click', async () => {
+  if (!userConfig || !userConfig.name) {
+    const name = nameInputEl.value.trim();
+    if (!name) {
+      nameInputEl.focus();
+      return;
+    }
+    userConfig = { name };
+    await window.rehabAPI.saveConfig(userConfig);
+  }
+  greetingEl.style.display = 'none';
+  exerciseScreenEl.style.display = 'contents';
+  init();
+});
+
+replayBtn.addEventListener('click', () => speak(greetingSpeechText));
+
+resetBtn.addEventListener('click', async () => {
+  await window.rehabAPI.resetConfig();
+  location.reload();
+});
 
 // --- Step 2: seated knee extension (right leg: hip 24, knee 26, ankle 28) ---
 const HIP = 24, KNEE = 26, ANKLE = 28;
@@ -215,6 +281,11 @@ async function stopSession() {
   statusEl.style.display = 'block';
   statusEl.textContent = 'Generating report...';
 
+  if (userConfig) {
+    userConfig.lastSessionReps = repCount;
+    await window.rehabAPI.saveConfig(userConfig);
+  }
+
   const summary = formatSessionSummary(sessionLog);
   try {
     await window.rehabAPI.generateReport(summary);
@@ -317,7 +388,7 @@ function draw(result) {
 
   const landmarks = landmarksList[0];
 
-  ctx.strokeStyle = '#00ff00';
+  ctx.strokeStyle = '#4a7c66';
   ctx.lineWidth = 3;
   for (const [a, b] of BONES) {
     const p1 = landmarks[a];
@@ -329,7 +400,7 @@ function draw(result) {
     ctx.stroke();
   }
 
-  ctx.fillStyle = '#ff0000';
+  ctx.fillStyle = '#c97a5a';
   for (const p of landmarks) {
     ctx.beginPath();
     ctx.arc(p.x * canvas.width, p.y * canvas.height, 5, 0, 2 * Math.PI);
@@ -337,4 +408,4 @@ function draw(result) {
   }
 }
 
-init();
+initGreeting();

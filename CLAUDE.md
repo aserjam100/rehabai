@@ -28,7 +28,8 @@ It does NOT prescribe exercise. Use that language in any UI copy.
 
 - NEVER run `git push`, `git remote add`, or anything that sends code to a
   remote. Not even if I ask in the moment.
-- NEVER run `git commit` without asking me first.
+- NEVER run `git commit`. Not even if I ask in the moment. I do all
+  committing myself, always.
 - NEVER modify `.gitignore` entries under "Claude / AI agent files".
 - NEVER run `git add -f` or `--force` on an ignored file.
 
@@ -145,7 +146,7 @@ Rehearse twice on the demo machine.
 |---|---|
 | Greeting | One large **START** button. Small speaker icon to replay. |
 | Exercise | One large **STOP** button. Dashboard overlay. Nothing else. |
-| Report | Opens in the same window. One **PRINT REPORT** button. |
+| Report | Opens in the same window. **PRINT REPORT** and **HOME** buttons. |
 
 Exercise selection: three large tiles on the greeting screen, or cycle
 through all three in one session. Your call — whichever is less code.
@@ -159,6 +160,15 @@ Operable from 2m away.
 - High contrast. Dark on light. No grey-on-grey, no thin weights.
 - No hover-only affordances, tooltips, dropdowns, modals, or settings.
 - No countdown timers or progress bars — they create pressure.
+
+**Exception — reset button.** A small circular icon button, top-right
+corner, present on the greeting and exercise screens (not the report,
+which is a separately loaded HTML file). Not for the patient — it's a
+dev/demo control to wipe the local JSON config (name + last session)
+before recording a demo, so the app comes back up as first-run.
+Deliberately breaks the "words not icons" and sizing rules above; that's
+fine, it's the one control never meant to be used by the person the rest
+of this UI is designed for.
 
 ---
 

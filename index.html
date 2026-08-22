@@ -4,9 +4,20 @@
   <meta charset="UTF-8" />
   <title>Rehab Coach</title>
   <style>
+    /* Soothing dark-on-light palette (per CLAUDE.md: "dark on light, no
+       thin weights") -- warm off-white background, slate text, muted
+       sage accent. Replaces the neon green-on-black used while building
+       Steps 1-4; too jarring for a senior-facing app. */
+    :root {
+      --bg: #f4f1ea;
+      --ink: #2c3e42;
+      --accent: #4a7c66;
+      --stop: #b5533c;
+      --muted: #7a8785;
+    }
     body {
       margin: 0;
-      background: #000;
+      background: var(--bg);
       display: flex;
       justify-content: center;
       align-items: center;
@@ -30,8 +41,8 @@
       top: 0;
       left: 0;
       right: 0;
-      color: #0f0;
-      background: #000;
+      color: var(--ink);
+      background: var(--bg);
       font: bold 32px monospace;
       padding: 10px 16px;
       z-index: 10;
@@ -43,8 +54,8 @@
       top: 0;
       left: 0;
       right: 0;
-      color: #0f0;
-      background: #000;
+      color: var(--ink);
+      background: var(--bg);
       font: bold 28px monospace;
       padding: 10px 16px;
       z-index: 10;
@@ -58,21 +69,98 @@
       min-width: 200px;
       min-height: 80px;
       font: bold 28px sans-serif;
-      background: #c00;
+      background: var(--stop);
       color: #fff;
       border: none;
       z-index: 20;
     }
+    #exerciseScreen {
+      display: none;
+    }
+    #greeting {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      color: var(--ink);
+      font-family: monospace;
+      text-align: center;
+      padding: 40px;
+    }
+    #greetingText {
+      font-size: 32px;
+      font-weight: bold;
+      max-width: 900px;
+    }
+    #nameInput {
+      display: none;
+      font-size: 28px;
+      padding: 12px;
+      min-height: 60px;
+      min-width: 400px;
+      text-align: center;
+      color: var(--ink);
+      border: 2px solid var(--ink);
+      background: #fff;
+    }
+    #startBtn {
+      min-width: 200px;
+      min-height: 80px;
+      font: bold 32px sans-serif;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+    }
+    #replayBtn {
+      display: none;
+      min-width: 60px;
+      min-height: 60px;
+      font-size: 28px;
+      background: #fff;
+      color: var(--ink);
+      border: 2px solid var(--ink);
+    }
+    /* Discreet dev/demo control -- deliberately breaks the "words not
+       icons" and sizing rules that apply to the senior-facing controls,
+       since this one is never meant to be seen or used by the patient. */
+    #resetBtn {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      width: 28px;
+      height: 28px;
+      font-size: 16px;
+      line-height: 1;
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--muted);
+      border-radius: 50%;
+      z-index: 30;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
-  <div id="status">starting...</div>
-  <div id="dashboard"></div>
-  <div id="stage">
-    <video id="video" autoplay playsinline muted></video>
-    <canvas id="overlay"></canvas>
+  <div id="greeting">
+    <div id="greetingText">Loading...</div>
+    <input id="nameInput" type="text" placeholder="Your name" />
+    <button id="startBtn">START</button>
+    <button id="replayBtn" title="Replay greeting">&#128266;</button>
   </div>
-  <button id="stopBtn">STOP</button>
+
+  <div id="exerciseScreen">
+    <div id="status">starting...</div>
+    <div id="dashboard"></div>
+    <div id="stage">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="overlay"></canvas>
+    </div>
+    <button id="stopBtn">STOP</button>
+  </div>
+
+  <button id="resetBtn" title="Reset app data">&#8635;</button>
+
   <script type="module" src="renderer.js"></script>
 </body>
 </html>

@@ -7,6 +7,27 @@ const os = require('os');
 const GEMMA_MODEL = 'gemma4:e2b';
 const GEMMA_URL = 'http://localhost:11434/api/generate';
 
+// Step 5: local JSON config -- greeting name + last session's rep count.
+let CONFIG_PATH; // set once app.getPath is available (app.whenReady)
+
+function loadConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function saveConfig(config) {
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config));
+}
+
+function resetConfig() {
+  try {
+    fs.unlinkSync(CONFIG_PATH);
+  } catch {}
+}
+
 const SENIOR_SYSTEM_PROMPT = `You are a warm exercise companion writing directly to the patient who just
 finished their exercises. Speak in second person, short sentences, no
 medical jargon, no raw numbers or degrees. Based only on the facts given,
@@ -81,17 +102,18 @@ function buildReportHtml(seniorText, clinicianText) {
   .column ul { margin: 0 0 14px; padding-left: 24px; }
   .column li { margin-bottom: 8px; }
   h2 { font-size: 22px; margin-top: 0; }
-  #printBtn {
+  .actions { display: flex; gap: 20px; margin-top: 20px; }
+  #printBtn, #homeBtn {
     min-width: 200px;
     min-height: 80px;
     font: bold 24px sans-serif;
-    background: #111;
-    color: #fff;
     border: none;
-    margin-top: 20px;
+    color: #fff;
   }
+  #printBtn { background: #4a7c66; }
+  #homeBtn { background: #2c3e42; }
   @media print {
-    #printBtn { display: none; }
+    .actions { display: none; }
   }
 </style>
 </head>
@@ -108,7 +130,10 @@ function buildReportHtml(seniorText, clinicianText) {
       ${textToHtml(clinicianText)}
     </div>
   </div>
-  <button id="printBtn" onclick="window.print()">PRINT REPORT</button>
+  <div class="actions">
+    <button id="printBtn" onclick="window.print()">PRINT REPORT</button>
+    <button id="homeBtn" onclick="window.rehabAPI.goHome()">HOME</button>
+  </div>
 </body>
 </html>`;
 }
@@ -128,6 +153,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
+
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     callback(permission === 'media');
   });
@@ -141,6 +168,11 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+ipcMain.handle('load-config', () => loadConfig());
+ipcMain.handle('save-config', (event, config) => saveConfig(config));
+ipcMain.handle('reset-config', () => resetConfig());
+ipcMain.handle('go-home', (event) => event.sender.loadFile('index.html'));
 
 ipcMain.handle('generate-report', async (event, formattedSummary) => {
   const [seniorText, clinicianText] = await Promise.all([
