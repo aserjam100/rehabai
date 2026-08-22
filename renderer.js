@@ -47,6 +47,7 @@ const progressLabelEl = document.getElementById('progressLabel');
 const progressExerciseEl = document.getElementById('progressExercise');
 const progressCanvas = document.getElementById('progressCanvas');
 const progressCaptionEl = document.getElementById('progressCaption');
+const flagsBtnEl = document.getElementById('flagsBtn');
 const demoPanelEl = document.getElementById('demoPanel');
 const demoIdleImg = document.getElementById('demoIdle');
 const demoRightImg = document.getElementById('demoRight');
@@ -133,6 +134,7 @@ function applyStaticStrings() {
   subPromptEl.textContent = t('agePrompt');
   ageOptionButtons.forEach((b) => b.classList.toggle('selected', b.dataset.age === selectedAge));
   progressLabelEl.textContent = t('progress');
+  flagsBtnEl.textContent = t('clinicianFlags');
   exerciseTileButtons.forEach((btn) => {
     btn.textContent = t(EXERCISES[btn.dataset.exercise].nameKey);
   });
@@ -227,6 +229,92 @@ function drawProgressChart(history) {
   });
 }
 
+// --- Cross-session clinician flags digest (brainstormed Gemma addition):
+// unlike the per-session report, this scans ALL logged sessions for
+// multi-session patterns -- declining best angle, persistent asymmetry --
+// and asks Gemma to write them up for a clinician. Triggered from the
+// greeting screen only, so the camera is never running when this fires
+// (see CLAUDE.md: never call Gemma while the camera is running). Same
+// JS-computes-facts/Gemma-tones split as every other Gemma call here --
+// formatFlagsFacts below decides what counts as a trend; Gemma only
+// phrases what it's given, told explicitly not to invent anything else.
+const ROM_DECLINE_WINDOW = 3;   // sessions compared for a declining-best-angle flag
+const ASYMMETRY_WINDOW = 2;     // sessions compared for a persistent-asymmetry flag
+const ASYMMETRY_THRESHOLD = 10; // degrees -- same threshold as the single-session report
+
+// Gate on raw session counts (any exercise with 3+ logged sessions) --
+// separate from formatFlagsFacts' own per-field checks below, which need
+// the newer bestAngle/rightAvgAngle/leftAvgAngle fields that only exist on
+// sessions logged after this feature shipped. Older sessions still count
+// toward showing the button; formatFlagsFacts just has less to say about
+// them.
+function hasEnoughHistoryForFlags(history) {
+  const counts = {};
+  for (const s of history) counts[s.exercise] = (counts[s.exercise] || 0) + 1;
+  return Object.values(counts).some((n) => n >= 3);
+}
+
+function formatFlagsFacts(history) {
+  const usable = history.filter((s) => typeof s.bestAngle === 'number');
+  const byExercise = {};
+  for (const s of usable) {
+    (byExercise[s.exercise] = byExercise[s.exercise] || []).push(s);
+  }
+
+  const lines = [];
+  let anyFlag = false;
+
+  // sessionHistory is stored oldest-first (pushed in order each session).
+  for (const [exercise, sessions] of Object.entries(byExercise)) {
+    lines.push(`${exercise}: ${sessions.length} session${sessions.length === 1 ? '' : 's'} recorded.`);
+
+    if (sessions.length >= ROM_DECLINE_WINDOW) {
+      const recent = sessions.slice(-ROM_DECLINE_WINDOW);
+      const declining = recent.every((s, i) => i === 0 || s.bestAngle < recent[i - 1].bestAngle);
+      lines.push(
+        `Best angle over the last ${ROM_DECLINE_WINDOW} sessions: ` +
+        `${recent.map((s) => s.bestAngle.toFixed(0)).join(', ')} degrees` +
+        (declining ? ' (declining each session).' : ' (no consistent decline).')
+      );
+      if (declining) anyFlag = true;
+    }
+
+    const asymSessions = sessions.filter((s) => typeof s.rightAvgAngle === 'number' && typeof s.leftAvgAngle === 'number');
+    if (asymSessions.length >= ASYMMETRY_WINDOW) {
+      const recent = asymSessions.slice(-ASYMMETRY_WINDOW);
+      const diffs = recent.map((s) => Math.abs(s.rightAvgAngle - s.leftAvgAngle));
+      const persisting = diffs.every((d) => d > ASYMMETRY_THRESHOLD);
+      lines.push(
+        `Right/left asymmetry over the last ${ASYMMETRY_WINDOW} sessions: ` +
+        `${diffs.map((d) => d.toFixed(0) + ' degrees').join(', ')}` +
+        (persisting ? ` (each above the ${ASYMMETRY_THRESHOLD} degree threshold).` : ' (not consistently above threshold).')
+      );
+      if (persisting) anyFlag = true;
+    }
+  }
+
+  if (!anyFlag) {
+    lines.push(lines.length === 0
+      ? 'Not enough repeated-exercise session history yet to identify multi-session trends.'
+      : 'No concerning multi-session patterns identified.');
+  }
+
+  return lines.join(' ');
+}
+
+flagsBtnEl.addEventListener('click', async () => {
+  flagsBtnEl.disabled = true;
+  const facts = formatFlagsFacts(userConfig.sessionHistory || []);
+  try {
+    await window.rehabAPI.generateFlagsDigest(facts, lang);
+    // On success the window navigates to the flags-digest page, same as
+    // generateReport -- no further UI update needed, this context is gone.
+  } catch (err) {
+    flagsBtnEl.disabled = false;
+    console.error('flags digest failed:', err);
+  }
+});
+
 // Step 5 + language brainstorm: JS computes the facts (name, last rep
 // count), Gemma only supplies warm tone and the target language -- same
 // "JS interprets, Gemma tones" split used for the end-of-session report.
@@ -245,6 +333,8 @@ async function showPersonalizedGreeting() {
     renderProgressLegend([...new Set(recent.map((s) => s.exercise))]);
     progressCaptionEl.textContent = '...';
   }
+  flagsBtnEl.disabled = false;
+  flagsBtnEl.style.display = hasEnoughHistoryForFlags(history) ? 'inline-block' : 'none';
 
   const hour = new Date().getHours();
   const timeOfDay = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
@@ -843,11 +933,24 @@ async function stopSession() {
 
   if (userConfig && repCount > 0) {
     userConfig.sessionHistory = userConfig.sessionHistory || [];
-    userConfig.sessionHistory.push({
+    const entry = {
       date: new Date().toISOString(),
       exercise: currentExercise.reportName,
       reps: repCount,
-    });
+      bestAngle, // feeds the cross-session flags digest's declining-ROM check
+    };
+    // Per-leg averages -- only meaningful for the alternating (knee
+    // extension) mode, same per-leg breakdown formatSessionSummary already
+    // computes for the single-session clinician report. Feeds the flags
+    // digest's persistent-asymmetry check.
+    if (currentExercise.mode === 'alternating') {
+      const rightReps = sessionLog.filter((r) => r.side === 'right');
+      const leftReps = sessionLog.filter((r) => r.side === 'left');
+      const avg = (reps) => reps.reduce((sum, r) => sum + r.maxAngle, 0) / reps.length;
+      if (rightReps.length > 0) entry.rightAvgAngle = avg(rightReps);
+      if (leftReps.length > 0) entry.leftAvgAngle = avg(leftReps);
+    }
+    userConfig.sessionHistory.push(entry);
     // Cap stored history -- only the history surface's chart (last 3) and
     // the greeting's trend line need recent data, no unbounded growth.
     userConfig.sessionHistory = userConfig.sessionHistory.slice(-20);

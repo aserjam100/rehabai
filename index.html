@@ -309,6 +309,30 @@
       font-style: italic;
       max-width: 320px;
     }
+    /* Cross-session clinician flags digest (brainstormed Gemma addition):
+       secondary control tucked under the history chart, shown only once
+       there's enough repeated-exercise history for a multi-session
+       comparison to mean anything (see hasEnoughHistoryForFlags in
+       renderer.js). Sized between the reset dot and the primary buttons --
+       a real word-labelled button per the Controls rules, but this is a
+       secondary/clinician-facing action, not the primary senior-facing
+       flow, so it doesn't need full 200x80 sizing. */
+    #flagsBtn {
+      display: none;
+      min-width: 160px;
+      min-height: 50px;
+      margin-top: 4px;
+      font: bold 16px sans-serif;
+      background: #fff;
+      color: var(--ink);
+      border: 2px solid var(--ink);
+      cursor: pointer;
+    }
+    #flagsBtn:disabled {
+      background: var(--muted);
+      color: #fff;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 <body>
@@ -335,6 +359,7 @@
       <div id="progressExercise"></div>
       <canvas id="progressCanvas" width="320" height="180"></canvas>
       <div id="progressCaption"></div>
+      <button id="flagsBtn"></button>
     </div>
     <button id="startBtn" disabled>START</button>
     <div id="exerciseTiles">
