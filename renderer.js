@@ -47,6 +47,13 @@ const progressLabelEl = document.getElementById('progressLabel');
 const progressExerciseEl = document.getElementById('progressExercise');
 const progressCanvas = document.getElementById('progressCanvas');
 const progressCaptionEl = document.getElementById('progressCaption');
+const demoPanelEl = document.getElementById('demoPanel');
+const demoIdleImg = document.getElementById('demoIdle');
+const demoRightImg = document.getElementById('demoRight');
+const demoLeftImg = document.getElementById('demoLeft');
+const demoIdleLabelEl = document.getElementById('demoIdleLabel');
+const demoRightLabelEl = document.getElementById('demoRightLabel');
+const demoLeftLabelEl = document.getElementById('demoLeftLabel');
 
 let poseLandmarker;
 let lastVideoTime = -1;
@@ -123,6 +130,9 @@ function applyStaticStrings() {
   subPromptEl.textContent = t('agePrompt');
   ageOptionButtons.forEach((b) => b.classList.toggle('selected', b.dataset.age === selectedAge));
   progressLabelEl.textContent = t('progress');
+  demoIdleLabelEl.textContent = t('demoSitting');
+  demoRightLabelEl.textContent = t('demoRightLeg');
+  demoLeftLabelEl.textContent = t('demoLeftLeg');
   // Only the still-onboarding "what's your name" screen is static text;
   // once a name exists, greetingTextEl holds Gemma's generated greeting.
   if (nameInputEl.style.display === 'block') {
@@ -184,7 +194,7 @@ function drawProgressChart(history) {
   const w = progressCanvas.width, h = progressCanvas.height;
   ctx2.clearRect(0, 0, w, h);
 
-  const recent = history.slice(-5);
+  const recent = history.slice(-3);
   const maxReps = Math.max(...recent.map((s) => s.reps), 1);
   const paddingSide = 20;
   const paddingTop = 34;    // room for the "REPS" axis tag + value labels
@@ -222,12 +232,12 @@ async function showPersonalizedGreeting() {
 
   const history = userConfig.sessionHistory || [];
   const lastSession = history[history.length - 1];
-  const showProgress = history.length >= 2;
+  const showProgress = history.length >= 1;
 
   progressSectionEl.style.display = showProgress ? 'flex' : 'none';
   if (showProgress) {
     drawProgressChart(history);
-    const recent = history.slice(-5);
+    const recent = history.slice(-3);
     renderProgressLegend([...new Set(recent.map((s) => s.exercise))]);
     progressCaptionEl.textContent = '...';
   }
@@ -248,7 +258,7 @@ async function showPersonalizedGreeting() {
   // to the chart's own facts (dates, reps, exercise) rather than raw numbers.
   let progressPromise = Promise.resolve('');
   if (showProgress) {
-    const recent = history.slice(-5);
+    const recent = history.slice(-3);
     const repsList = recent.map((s) => s.reps).join(', ');
     const trend = recent[recent.length - 1].reps > recent[0].reps
       ? 'improving'
@@ -345,8 +355,11 @@ langToggleBtn.addEventListener('click', async () => {
   }
 });
 
-// --- Step 2: seated knee extension (right leg: hip 24, knee 26, ankle 28) ---
-const HIP = 24, KNEE = 26, ANKLE = 28;
+// --- Step 2: seated knee extension, alternating legs ---
+const LEGS = {
+  right: { hip: 24, knee: 26, ankle: 28 },
+  left: { hip: 23, knee: 25, ankle: 27 },
+};
 const POSITION_LANDMARKS = [11, 12, 23, 24, 25, 26, 27, 28];
 const VISIBILITY_THRESHOLD = 0.5;
 const POSITION_HOLD_MS = 2000;
@@ -354,7 +367,11 @@ const COUNTDOWN_MS = 3000;
 // Camera angle changes what a bent knee's 2D projected angle reads as (see
 // CLAUDE.md: 2D-only, no z), so the up/down thresholds are calibrated per
 // session from the actual rest angle measured during the position hold,
-// rather than hardcoded. HYSTERESIS_MARGIN sets the gap between them.
+// rather than hardcoded. HYSTERESIS_MARGIN sets the gap between them. One
+// shared threshold for both legs (calibrated from whichever leg reads
+// higher during the hold) rather than separate per-leg calibration --
+// keeps the tuned-and-verified single-leg calibration approach intact
+// instead of introducing a second untested source of jitter.
 const HYSTERESIS_MARGIN = 10;    // degrees below the calibrated rest ceiling for the down-reset
 const DEFAULT_UP_THRESHOLD = 145; // fallback if calibration somehow produced nothing
 
@@ -364,9 +381,54 @@ let countdownStart = null;
 let restAngleMax = null;
 let kneeUpThreshold = null;
 let kneeDownThreshold = null;
+let activeSide = 'right'; // alternates after every completed rep
 let repState = 'down';
 let repCount = 0;
 let currentAngle = null;
+
+function legAngle(landmarks, side) {
+  const l = LEGS[side];
+  return angleDegrees(landmarks[l.hip], landmarks[l.knee], landmarks[l.ankle]);
+}
+
+// --- Exercise demonstration images (replaces Step 6's planned webcam-
+// keyframe stick figure -- see CLAUDE.md). Static assets the user supplies
+// externally; this file only references a fixed local path per exercise
+// state. Falls back to a plain labelled placeholder box until the real
+// file is dropped in, so the app runs and looks reasonable either way. ---
+const EXERCISE_IMAGES = {
+  idle: 'assets/exercises/knee-extension-sitting.png',
+  right: 'assets/exercises/knee-extension-right.png',
+  left: 'assets/exercises/knee-extension-left.png',
+};
+
+function placeholderImage(label) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="130" height="130">` +
+    `<rect width="130" height="130" fill="#f4f1ea"/>` +
+    `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" ` +
+    `font-family="sans-serif" font-size="15" font-weight="bold" fill="#2c3e42">${label}</text></svg>`;
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
+
+function setupDemoImage(imgEl, path, fallbackLabel) {
+  imgEl.addEventListener('error', () => {
+    imgEl.src = placeholderImage(fallbackLabel);
+  }, { once: true });
+  imgEl.src = path;
+}
+
+setupDemoImage(demoIdleImg, EXERCISE_IMAGES.idle, 'SITTING');
+setupDemoImage(demoRightImg, EXERCISE_IMAGES.right, 'RIGHT LEG');
+setupDemoImage(demoLeftImg, EXERCISE_IMAGES.left, 'LEFT LEG');
+
+function updateDemoPanel() {
+  const visible = appState === 'positioning' || appState === 'countdown' || appState === 'active';
+  demoPanelEl.style.display = visible ? 'flex' : 'none';
+  if (!visible) return;
+  demoIdleImg.classList.toggle('highlight', appState !== 'active');
+  demoRightImg.classList.toggle('highlight', appState === 'active' && activeSide === 'right');
+  demoLeftImg.classList.toggle('highlight', appState === 'active' && activeSide === 'left');
+}
 
 // --- Step 3: dashboard + session log ---
 const sessionLog = []; // { n, minAngle, maxAngle, durationSec }
@@ -409,8 +471,12 @@ function updateExercise(landmarks, now) {
         positionStableSince = now;
         restAngleMax = null; // fresh calibration for this hold
       }
-      const angle = angleDegrees(landmarks[HIP], landmarks[KNEE], landmarks[ANKLE]);
-      if (angle !== null) {
+      // Calibrate from whichever leg reads higher this frame -- one shared
+      // threshold covers both legs (see const block above).
+      const rightAngle = legAngle(landmarks, 'right');
+      const leftAngle = legAngle(landmarks, 'left');
+      const angle = Math.max(rightAngle ?? -Infinity, leftAngle ?? -Infinity);
+      if (angle !== -Infinity) {
         restAngleMax = restAngleMax === null ? angle : Math.max(restAngleMax, angle);
       }
       if (now - positionStableSince >= POSITION_HOLD_MS) {
@@ -427,14 +493,13 @@ function updateExercise(landmarks, now) {
     if (now - countdownStart >= COUNTDOWN_MS) {
       appState = 'active';
       repCount = 0;
+      activeSide = 'right'; // always starts on the right leg
       kneeUpThreshold = restAngleMax !== null ? restAngleMax : DEFAULT_UP_THRESHOLD;
       kneeDownThreshold = kneeUpThreshold - HYSTERESIS_MARGIN;
       // Start from whichever side of the range the leg actually is at --
       // don't assume 'down', or an already-extended leg forces a spurious
       // extra half-cycle before the first real rep can count.
-      const startAngle = landmarks
-        ? angleDegrees(landmarks[HIP], landmarks[KNEE], landmarks[ANKLE])
-        : null;
+      const startAngle = landmarks ? legAngle(landmarks, activeSide) : null;
       repState = startAngle !== null && startAngle > kneeUpThreshold ? 'up' : 'down';
       repStartTime = now;
       currentRepMinAngle = startAngle;
@@ -445,7 +510,7 @@ function updateExercise(landmarks, now) {
 
   // appState === 'active'
   if (!landmarks) return;
-  const angle = angleDegrees(landmarks[HIP], landmarks[KNEE], landmarks[ANKLE]);
+  const angle = legAngle(landmarks, activeSide);
   if (angle === null) return;
   currentAngle = angle;
 
@@ -456,26 +521,32 @@ function updateExercise(landmarks, now) {
   if (repState === 'down' && angle > kneeUpThreshold) {
     repState = 'up';
   } else if (repState === 'up' && angle < kneeDownThreshold) {
-    repState = 'down';
     repCount++;
 
     const durationSec = (now - repStartTime) / 1000;
-    const entry = { n: repCount, minAngle: currentRepMinAngle, maxAngle: currentRepMaxAngle, durationSec };
+    const entry = { n: repCount, side: activeSide, minAngle: currentRepMinAngle, maxAngle: currentRepMaxAngle, durationSec };
     sessionLog.push(entry);
     console.log('rep complete:', entry, 'sessionLog:', sessionLog);
 
     formStatus = currentRepMaxAngle >= bestAngle - HYSTERESIS_MARGIN ? t('formGood') : t('formTryHarder');
 
+    // One rep = one leg's up-down cycle, then alternate to the other leg.
+    // Re-seed state from the NEW side's current angle (not the old side's),
+    // same "don't assume 'down'" reasoning as the initial countdown start.
+    activeSide = activeSide === 'right' ? 'left' : 'right';
+    const newAngle = legAngle(landmarks, activeSide);
+    repState = newAngle !== null && newAngle > kneeUpThreshold ? 'up' : 'down';
     repStartTime = now;
-    currentRepMinAngle = angle;
-    currentRepMaxAngle = angle;
+    currentRepMinAngle = newAngle;
+    currentRepMaxAngle = newAngle;
   }
 }
 
 function dashboardText() {
   const angleStr = currentAngle !== null ? currentAngle.toFixed(0) + ' deg' : '--';
   const bestStr = bestAngle !== null ? bestAngle.toFixed(0) + ' deg' : '--';
-  return `${t('reps')}: ${repCount}\n${t('angle')}: ${angleStr}\n${t('best')}: ${bestStr}\n${t('form')}: ${formStatus}`;
+  const sideStr = activeSide === 'right' ? t('sideRight') : t('sideLeft');
+  return `${t('reps')}: ${repCount}\n${t('side')}: ${sideStr}\n${t('angle')}: ${angleStr}\n${t('best')}: ${bestStr}\n${t('form')}: ${formStatus}`;
 }
 
 function statusText() {
@@ -499,18 +570,39 @@ function formatSessionSummary(log) {
   const avgMaxAngle = log.reduce((sum, r) => sum + r.maxAngle, 0) / log.length;
 
   const lines = [];
-  lines.push(`Completed ${log.length} rep${log.length === 1 ? '' : 's'} of seated knee extension.`);
+  lines.push(`Completed ${log.length} rep${log.length === 1 ? '' : 's'} of seated knee extension, alternating right and left legs.`);
   lines.push(
-    `Knee straightened furthest on rep ${bestRep.n} (${bestRep.maxAngle.toFixed(0)} degrees, ` +
+    `Knee straightened furthest on rep ${bestRep.n} (${bestRep.side} leg, ${bestRep.maxAngle.toFixed(0)} degrees, ` +
     `compared to ${avgMaxAngle.toFixed(0)} degrees average).`
   );
-  lines.push(`Rep ${weakestRep.n} was weakest at ${weakestRep.maxAngle.toFixed(0)} degrees.`);
+  lines.push(`Rep ${weakestRep.n} (${weakestRep.side} leg) was weakest at ${weakestRep.maxAngle.toFixed(0)} degrees.`);
+
+  // Per-leg breakdown, since the clinician prompt is explicitly asked to
+  // flag asymmetry -- that's only meaningful now that both legs are
+  // actually tracked (previously this app only ever measured one leg).
+  const rightReps = log.filter((r) => r.side === 'right');
+  const leftReps = log.filter((r) => r.side === 'left');
+  const avg = (reps) => reps.reduce((sum, r) => sum + r.maxAngle, 0) / reps.length;
+  if (rightReps.length > 0 && leftReps.length > 0) {
+    const avgRight = avg(rightReps);
+    const avgLeft = avg(leftReps);
+    lines.push(
+      `Right leg: ${rightReps.length} rep${rightReps.length === 1 ? '' : 's'}, ` +
+      `average maximum angle ${avgRight.toFixed(0)} degrees. ` +
+      `Left leg: ${leftReps.length} rep${leftReps.length === 1 ? '' : 's'}, ` +
+      `average maximum angle ${avgLeft.toFixed(0)} degrees.`
+    );
+    const diff = Math.abs(avgRight - avgLeft);
+    if (diff > 10) {
+      lines.push(`Asymmetry noted: right and left leg average maximum angles differ by ${diff.toFixed(0)} degrees.`);
+    }
+  }
 
   for (const r of log) {
     const rom = r.maxAngle - r.minAngle;
     if (rom < bestRom * 0.85) {
       lines.push(
-        `Rep ${r.n} had a range of motion of ${rom.toFixed(0)} degrees, ` +
+        `Rep ${r.n} (${r.side} leg) had a range of motion of ${rom.toFixed(0)} degrees, ` +
         `more than 15% below the best rep's range of motion of ${bestRom.toFixed(0)} degrees.`
       );
     }
@@ -526,17 +618,18 @@ async function stopSession() {
   }
   stopBtn.style.display = 'none';
   dashboardEl.style.display = 'none';
+  demoPanelEl.style.display = 'none';
   statusEl.style.display = 'block';
   statusEl.textContent = t('generatingReport');
 
-  if (userConfig) {
+  if (userConfig && repCount > 0) {
     userConfig.sessionHistory = userConfig.sessionHistory || [];
     userConfig.sessionHistory.push({
       date: new Date().toISOString(),
       exercise: 'Seated Knee Extension',
       reps: repCount,
     });
-    // Cap stored history -- only the history surface's chart (last 5) and
+    // Cap stored history -- only the history surface's chart (last 3) and
     // the greeting's trend line need recent data, no unbounded growth.
     userConfig.sessionHistory = userConfig.sessionHistory.slice(-20);
     await window.rehabAPI.saveConfig(userConfig);
@@ -591,7 +684,12 @@ async function init() {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
 
-    const availableW = window.innerWidth - 40;
+    // Reserve room for #demoPanel (190px image + border + its margin-right,
+    // see index.html) so the video isn't sized to the full window width --
+    // otherwise it overflows the flex row and, being position:absolute,
+    // paints on top of the demo images instead of sitting beside them.
+    const DEMO_PANEL_SPACE = 240;
+    const availableW = window.innerWidth - 40 - DEMO_PANEL_SPACE;
     const availableH = window.innerHeight - 80;
     const scale = Math.min(
       availableW / video.videoWidth,
@@ -624,6 +722,7 @@ function renderLoop() {
     const landmarks = result.landmarks && result.landmarks[0];
     draw(result);
     updateExercise(landmarks, now);
+    updateDemoPanel();
     if (appState === 'active') {
       statusEl.style.display = 'none';
       dashboardEl.style.display = 'block';

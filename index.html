@@ -77,6 +77,47 @@
     #exerciseScreen {
       display: none;
     }
+    /* Exercise demonstration (replaces the originally-planned webcam-
+       keyframe stick figure -- see CLAUDE.md's Step 6 amendment). Static
+       images supplied externally by the user (generated outside the app;
+       never fetched from any API at runtime, so the locked "no cloud
+       APIs" rule stays intact) sit beside the live feed since #exercise-
+       Screen uses display:contents, making #demoPanel a sibling flex item
+       of #stage under the same body-level flex row. Whichever pose the
+       senior should currently emulate is highlighted; the rest are dimmed. */
+    #demoPanel {
+      display: none;
+      flex-direction: column;
+      gap: 14px;
+      align-items: center;
+      margin-right: 24px;
+    }
+    .demoItem {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+    .demoImg {
+      width: 190px;
+      height: 190px;
+      object-fit: contain;
+      background: #fff;
+      border: 3px solid var(--muted);
+      border-radius: 8px;
+      opacity: 0.5;
+      transition: opacity 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+    }
+    .demoImg.highlight {
+      opacity: 1;
+      border-color: var(--accent);
+      transform: scale(1.08);
+    }
+    .demoLabel {
+      font-size: 16px;
+      font-weight: bold;
+      color: var(--ink);
+    }
     #greeting {
       display: flex;
       flex-direction: column;
@@ -283,6 +324,20 @@
   <div id="exerciseScreen">
     <div id="status">starting...</div>
     <div id="dashboard"></div>
+    <div id="demoPanel">
+      <div class="demoItem">
+        <img id="demoIdle" class="demoImg" alt="" />
+        <div class="demoLabel" id="demoIdleLabel"></div>
+      </div>
+      <div class="demoItem">
+        <img id="demoRight" class="demoImg" alt="" />
+        <div class="demoLabel" id="demoRightLabel"></div>
+      </div>
+      <div class="demoItem">
+        <img id="demoLeft" class="demoImg" alt="" />
+        <div class="demoLabel" id="demoLeftLabel"></div>
+      </div>
+    </div>
     <div id="stage">
       <video id="video" autoplay playsinline muted></video>
       <canvas id="overlay"></canvas>

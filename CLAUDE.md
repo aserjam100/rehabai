@@ -11,7 +11,7 @@ not a suggestion.
 Open app  ->  Greeting by name
           ->  Click START
           ->  "Get into position" check
-          ->  Stick figure demonstrates the move
+          ->  Demo images show the move (see Step 6 amendment)
           ->  Senior copies it, live dashboard shows reps + angle + form
           ->  Click STOP
           ->  HTML report opens
@@ -83,6 +83,17 @@ until then. Then a 3-2-1 countdown.
 
 *Reps:* three landmarks -> angle via dot product -> up/down state machine.
 
+**AMENDED (post-Step-5 addition, user request):** alternates legs —
+right leg up/down cycle = 1 rep, then left leg, then right again. One
+shared up/down threshold calibrated from whichever leg reads higher
+during the position hold (not two separately-calibrated thresholds —
+keeps the single tuned-and-verified calibration approach rather than
+introducing a second untested source of jitter). `activeSide` always
+starts on `'right'` each session. Session log entries now carry a `side`
+field; the clinician report's per-rep facts include a right/left
+breakdown and flag asymmetry (>10° average max-angle difference) — see
+"The two reports" and `formatSessionSummary()` in `renderer.js`.
+
 Print live angle on screen while building. Tune thresholds by watching it.
 **Verify:** rep count matches reality 10 times running.
 
@@ -117,19 +128,33 @@ Speak it: `speechSynthesis.speak(new SpeechSynthesisUtterance(text))`.
 Built into Chromium. Offline. No dependency.
 **Verify:** greets by name, speaks aloud, shows last session count.
 
-### T+2:50 — Step 6: Instruction stick figure
-Capture TWO poses from my live webcam during a dev session — start position
-and end position — and save the landmark arrays to JSON. Interpolate
-between them on a loop to animate the demonstration.
+### T+2:50 — Step 6: Instruction demonstration (AMENDED — no longer stick figure)
+~~Capture TWO poses from my live webcam during a dev session... Interpolate
+between them on a loop.~~ Superseded by user decision: static images
+instead. Per exercise, 2-3 labelled images (e.g. knee extension: sitting /
+right leg raised / left leg raised) shown beside the live feed
+(`#demoPanel` in `index.html`), the current target pose highlighted based
+on live rep state (`updateDemoPanel()` in `renderer.js`).
 
-Do NOT record video. Do NOT build a video-to-landmark extractor.
-Two keyframes and a lerp is enough.
-**Verify:** figure loops the movement beside the live feed.
+Images are supplied externally by the user (generated in a browser tool
+of their choice, not called from this app) and dropped in as local files
+at `assets/exercises/*.png` — **the app never makes a network call to
+generate or fetch them**, so the locked "no cloud APIs" stack rule still
+holds; this is a one-time external asset-sourcing step, same category as
+hand-writing any other image asset. Missing files fall back to a plain
+labelled placeholder box (`placeholderImage()`) so the app still runs
+before real assets exist.
+
+Do NOT record video. Do NOT build a video-to-landmark extractor — that
+part of the original reasoning still applies, it's just moot now that
+this isn't landmark-driven at all.
+**Verify:** demo panel shows beside the live feed; correct image
+highlights as position/countdown/active state and active leg change.
 
 ### T+3:10 — Step 7: Exercises 2 and 3
 Seated arm raise, sit-to-stand. Config only: landmark triple, thresholds,
-two keyframes, form-cue text. If this needs new code, step 2 was written
-wrong — tell me.
+demo images (see Step 6 amendment), form-cue text. If this needs new
+code, step 2 was written wrong — tell me.
 **Verify:** all three work.
 
 ### T+3:30 — Step 8: UI pass
@@ -144,8 +169,8 @@ Rehearse twice on the demo machine.
 
 | Screen | Controls |
 |---|---|
-| Greeting | Language + age picker (first run) + One large **START** button. Small speaker icon to replay. Returning users with 2+ sessions also see a small progress chart (see exceptions below). |
-| Exercise | One large **STOP** button. Dashboard overlay. Nothing else. |
+| Greeting | Language + age picker (first run) + One large **START** button. Small speaker icon to replay. Returning users with 1+ sessions also see a small progress chart (see exceptions below). |
+| Exercise | One large **STOP** button. Dashboard overlay. Demo image panel beside the live feed (see Step 6 amendment). |
 | Report | Opens in the same window. **PRINT REPORT** and **HOME** buttons. |
 
 Exercise selection: three large tiles on the greeting screen, or cycle
@@ -160,6 +185,11 @@ Operable from 2m away.
 - High contrast. Dark on light. No grey-on-grey, no thin weights.
 - No hover-only affordances, tooltips, dropdowns, modals, or settings.
 - No countdown timers or progress bars — they create pressure.
+
+**Exception — exercise demo panel.** Breaks "never more than 3 things on
+screen." Shown beside the live feed on the exercise screen; see the Step
+6 amendment above for the full scope (static externally-sourced images,
+current target pose highlighted by live rep state).
 
 **Exception — reset button.** A small circular icon button, top-right
 corner, present on the greeting and exercise screens (not the report,
@@ -193,7 +223,7 @@ idea), not a live preference the patient needs to re-toggle. Stored as
 **Exception — history chart (breaks "never more than 3 things" and the
 "no charts" out-of-scope rule).** The returning-user greeting screen adds
 a small canvas bar chart ("YOUR PROGRESS") showing rep counts for the
-last up to 5 sessions, shown only once at least 2 sessions exist. Plain
+last up to 3 sessions, shown once at least 1 session exists. Plain
 `<canvas>`, drawn the same way as the pose overlay — no charting library
 (the locked stack still forbids that). JS computes the bars and the
 improving/declining/steady trend word from real numbers; Gemma is only
@@ -299,9 +329,13 @@ Plain text output from both. No JSON.
 
 ## Technical decisions — already made
 
-**Normalization.** Every frame: subtract hip midpoint, then divide by torso
-length (shoulder midpoint to hip midpoint). Apply identically to live and
-keyframe data.
+**Normalization — SUPERSEDED.** Was: every frame, subtract hip midpoint,
+divide by torso length, apply identically to live and keyframe data. This
+was planning for Step 6's originally-specified landmark keyframe
+interpolation, which never got built before Step 6 was replaced with
+static images (see Step 6 amendment above) — there's no keyframe data to
+normalize against anymore. Kept here only as a record of what was
+planned; not implemented, not needed.
 
 **Ignore `z`.** Monocular depth is noise. 2D only.
 
@@ -309,8 +343,8 @@ keyframe data.
 (~80-90 degrees), the thigh foreshortens in the 2D projection and a bent
 vs. straight knee become indistinguishable no matter how thresholds are
 tuned — confirmed by testing. `angleDegrees()` in `renderer.js` uses
-x/y/z for this reason. Everything else (stick figure drawing, keyframe
-interpolation, any future landmark math) stays 2D-only.
+x/y/z for this reason. Everything else (the live pose overlay drawing,
+any future landmark math) stays 2D-only.
 
 **Angles.** Three landmarks, dot product, degrees. That is the entire
 "pose estimation". No classifier.
@@ -337,7 +371,7 @@ space without needing to flip x-coordinates themselves.
 Behind schedule? Drop in this order:
 
 1. Exercise 3
-2. Instruction stick figure (step 6) — show text instructions instead
+2. Exercise demo images (step 6) — show text instructions instead
 3. Exercise 2
 
 **Never cut:** the Gemma report, or the greeting.
