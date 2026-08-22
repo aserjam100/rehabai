@@ -678,6 +678,58 @@ function updateExercise(landmarks, now) {
   }
 }
 
+// --- Voice-free stop gesture (brainstormed alternative to walking to the
+// STOP button): cross both wrists in front of the chest, held stable for
+// STOP_HOLD_MS -- same hold-timer pattern as the position check above.
+// Landmark left/right labels are the subject's own body sides regardless
+// of camera mirroring (see CLAUDE.md's mirroring note), so "crossed" is
+// checked relative to the shoulder midline rather than a fixed screen
+// direction -- correct regardless of which way the person faces the lens.
+// Checked every frame the exercise screen is up (all three appStates),
+// same as updateExercise -- harmless if held during positioning/countdown,
+// and keeps this one check unconditional instead of gating it per state.
+const STOP_HOLD_MS = 2000;
+let stopGestureSince = null;
+
+function isCrossedArms(landmarks) {
+  const ls = landmarks[11], rs = landmarks[12];   // shoulders
+  const lw = landmarks[15], rw = landmarks[16];   // wrists
+  const lh = landmarks[23], rh = landmarks[24];   // hips
+  const pts = [ls, rs, lw, rw, lh, rh];
+  if (pts.some((p) => !p || (p.visibility ?? 0) < VISIBILITY_THRESHOLD)) return false;
+
+  const shoulderWidth = Math.abs(rs.x - ls.x);
+  if (shoulderWidth < 1e-6) return false;
+  const midX = (ls.x + rs.x) / 2;
+  const margin = shoulderWidth * 0.2; // require a clear cross, not just touching the midline
+  const leftShoulderSign = Math.sign(ls.x - midX);
+
+  // Crossed: each wrist has moved past the midline onto the OPPOSITE
+  // shoulder's side, by more than the margin.
+  const crossed =
+    Math.sign(rw.x - midX) === leftShoulderSign && Math.abs(rw.x - midX) > margin &&
+    Math.sign(lw.x - midX) === -leftShoulderSign && Math.abs(lw.x - midX) > margin;
+  if (!crossed) return false;
+
+  // ...and roughly at chest height, not down at the waist or up at the face.
+  const chestTop = Math.min(ls.y, rs.y);
+  const chestBottom = Math.max(lh.y, rh.y);
+  const inChestBand = (p) => p.y >= chestTop && p.y <= chestBottom;
+  return inChestBand(lw) && inChestBand(rw);
+}
+
+// Returns true once the gesture has been held continuously for
+// STOP_HOLD_MS. Also updates stopGestureSince, which dashboardText() and
+// statusText() read to show the "Stopping..." hint mid-hold.
+function updateStopGesture(landmarks, now) {
+  if (landmarks && isCrossedArms(landmarks)) {
+    if (stopGestureSince === null) stopGestureSince = now;
+    return now - stopGestureSince >= STOP_HOLD_MS;
+  }
+  stopGestureSince = null;
+  return false;
+}
+
 function dashboardText() {
   const angleStr = currentAngle !== null ? currentAngle.toFixed(0) + ' deg' : '--';
   const bestStr = bestAngle !== null ? bestAngle.toFixed(0) + ' deg' : '--';
@@ -687,17 +739,22 @@ function dashboardText() {
     lines.push(`${t('side')}: ${sideStr}`);
   }
   lines.push(`${t('angle')}: ${angleStr}`, `${t('best')}: ${bestStr}`, `${t('form')}: ${formStatus}`);
+  if (stopGestureSince !== null) lines.push(t('stopping'));
   return lines.join('\n');
 }
 
 function statusText() {
+  let text;
   if (appState === 'positioning') {
-    return t('positioning');
+    text = t('positioning');
+  } else {
+    // appState === 'countdown'
+    const remaining = Math.max(0, COUNTDOWN_MS - (performance.now() - countdownStart));
+    const n = Math.ceil(remaining / 1000);
+    text = n > 0 ? String(n) : t('go');
   }
-  // appState === 'countdown'
-  const remaining = Math.max(0, COUNTDOWN_MS - (performance.now() - countdownStart));
-  const n = Math.ceil(remaining / 1000);
-  return n > 0 ? String(n) : t('go');
+  if (stopGestureSince !== null) text += '\n' + t('stopping');
+  return text;
 }
 
 // --- Step 4: format sessionLog into labelled English for Gemma ---
@@ -885,6 +942,10 @@ function renderLoop() {
     draw(result);
     updateExercise(landmarks, now);
     updateDemoPanel();
+    if (updateStopGesture(landmarks, now)) {
+      stopSession();
+      return;
+    }
     if (appState === 'active') {
       statusEl.style.display = 'none';
       dashboardEl.style.display = 'block';
