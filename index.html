@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Rehab Coach</title>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    /* Mirroring convention: #stage is CSS-flipped so the feed acts like a
+       mirror. Video and canvas are children of the same flipped container,
+       so drawn landmarks stay aligned with the video without flipping
+       landmark math itself. */
+    #stage {
+      position: relative;
+      transform: scaleX(-1);
+    }
+    video, canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    #status {
+      position: fixed;
+      top: 0;
+      left: 0;
+      color: #0f0;
+      background: #000;
+      font: 16px monospace;
+      padding: 4px 8px;
+      z-index: 10;
+      white-space: pre;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">starting...</div>
+  <div id="stage">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+  </div>
+  <script type="module" src="renderer.js"></script>
+</body>
+</html>

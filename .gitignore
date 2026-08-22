@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+config.json
+*.log
+
+# Claude / AI agent files
+.claude/
+.mcp.json
+CLAUDE.local.md
