@@ -2,6 +2,10 @@ import {
   PoseLandmarker,
   FilesetResolver,
 } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+import { LANGUAGES, LANGUAGE_NAMES, STRINGS } from "./i18n.js";
+
+// BCP-47 tags so speechSynthesis picks a matching voice where the OS has one.
+const SPEECH_LANG = { en: 'en-US', ms: 'ms-MY', ta: 'ta-IN', zh: 'zh-CN' };
 
 // Bone list: pairs of landmark indices in the BlazePose 33-point topology.
 // Face/hand fine detail is skipped -- torso and limbs are enough for a
@@ -32,47 +36,261 @@ const nameInputEl = document.getElementById('nameInput');
 const startBtn = document.getElementById('startBtn');
 const replayBtn = document.getElementById('replayBtn');
 const resetBtn = document.getElementById('resetBtn');
+const langToggleBtn = document.getElementById('langToggleBtn');
+const langChoiceEl = document.getElementById('languageChoice');
+const langOptionButtons = Array.from(document.querySelectorAll('.langOption'));
+const subPromptEl = document.getElementById('subPrompt');
+const ageChoiceEl = document.getElementById('ageChoice');
+const ageOptionButtons = Array.from(document.querySelectorAll('.ageOption'));
+const progressSectionEl = document.getElementById('progressSection');
+const progressLabelEl = document.getElementById('progressLabel');
+const progressExerciseEl = document.getElementById('progressExercise');
+const progressCanvas = document.getElementById('progressCanvas');
+const progressCaptionEl = document.getElementById('progressCaption');
 
 let poseLandmarker;
 let lastVideoTime = -1;
 let mediaStream = null;
 let running = true;
 
-// --- Step 5: greeting, local config, reset ---
+// --- Step 5: greeting, local config, reset, language ---
 let userConfig = null;
 let greetingSpeechText = '';
+let lang = 'en';
+let selectedAge = null; // 'under60' | '60-69' | '70-79' | '80+', onboarding-only
 
-function buildGreetingText(config) {
-  const hour = new Date().getHours();
-  const timeGreeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-  let text = `${timeGreeting}, ${config.name}.`;
-  if (config.lastSessionReps) {
-    text += ` Last time you did ${config.lastSessionReps} reps.`;
-  }
-  text += ' Ready for today?';
-  return text;
+function t(key) {
+  return (STRINGS[lang] && STRINGS[lang][key]) || STRINGS.en[key];
 }
 
-function speak(text) {
+// Voice names known to sound natural for a given language, preferred over
+// whatever speechSynthesis would otherwise pick implicitly -- with no voice
+// set explicitly, Chromium falls back to the OS's configured "default"
+// voice, which on macOS is often a dated, robotic-sounding one (e.g. "Fred")
+// rather than a good native voice like "Samantha". Naming a voice explicitly
+// fixes that; language-lang matching below is the fallback where none of
+// these are installed.
+const PREFERRED_VOICE_NAMES = {
+  en: ['Samantha', 'Google US English', 'Ava', 'Zoe', 'Alex'],
+  ms: [],
+  ta: [],
+  zh: ['Google 普通话（中国大陆）', 'Ting-Ting', 'Tingting'],
+};
+
+// getVoices() can return an empty list on the very first call -- the OS
+// voice list loads asynchronously. Cache the (eventually non-empty) list
+// behind one promise instead of re-querying on every speak() call.
+let voicesPromise = null;
+function loadVoices() {
+  if (voicesPromise) return voicesPromise;
+  voicesPromise = new Promise((resolve) => {
+    const existing = window.speechSynthesis.getVoices();
+    if (existing.length) {
+      resolve(existing);
+      return;
+    }
+    window.speechSynthesis.onvoiceschanged = () => resolve(window.speechSynthesis.getVoices());
+  });
+  return voicesPromise;
+}
+
+function pickVoice(voices, bcp47) {
+  for (const name of PREFERRED_VOICE_NAMES[lang] || []) {
+    const match = voices.find((v) => v.name === name);
+    if (match) return match;
+  }
+  const prefix = bcp47.split('-')[0];
+  return voices.find((v) => v.lang === bcp47) || voices.find((v) => v.lang.startsWith(prefix)) || null;
+}
+
+async function speak(text) {
   window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  const utterance = new SpeechSynthesisUtterance(text);
+  const target = SPEECH_LANG[lang] || 'en-US';
+  utterance.lang = target;
+  const voice = pickVoice(await loadVoices(), target);
+  if (voice) utterance.voice = voice;
+  window.speechSynthesis.speak(utterance);
+}
+
+// Updates all fixed (non-Gemma) chrome text to the current language.
+function applyStaticStrings() {
+  startBtn.textContent = t('start');
+  stopBtn.textContent = t('stop');
+  nameInputEl.placeholder = t('namePlaceholder');
+  langToggleBtn.textContent = LANGUAGE_NAMES[lang];
+  langOptionButtons.forEach((b) => b.classList.toggle('selected', b.dataset.lang === lang));
+  subPromptEl.textContent = t('agePrompt');
+  ageOptionButtons.forEach((b) => b.classList.toggle('selected', b.dataset.age === selectedAge));
+  progressLabelEl.textContent = t('progress');
+  // Only the still-onboarding "what's your name" screen is static text;
+  // once a name exists, greetingTextEl holds Gemma's generated greeting.
+  if (nameInputEl.style.display === 'block') {
+    greetingTextEl.textContent = t('namePrompt');
+  }
+}
+
+// --- History surface: small canvas bar chart of rep counts across recent
+// sessions (see CLAUDE.md's documented "no charts" exception). Plain
+// canvas, same approach as the pose overlay -- no charting library.
+// Labelled explicitly (axis tag, per-bar date) since a bare set of bars
+// with no context doesn't convey what's being measured. ---
+function formatShortDate(iso) {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// One color per exercise so a mixed-history chart (once Step 7 adds the
+// other two exercises) reads as "which exercise" at a glance, not just
+// "how many reps". Fixed map, not computed -- CLAUDE.md caps this app at
+// exactly three exercises, so there's no arbitrary-N case to handle.
+const EXERCISE_COLORS = {
+  'Seated Knee Extension': '#4a7c66', // existing accent green
+  'Seated Arm Raise': '#c97a5a',      // matches the landmark-dot color in draw()
+  'Sit-to-Stand': '#5a7ca0',
+};
+const DEFAULT_EXERCISE_COLOR = '#4a7c66';
+function exerciseColor(name) {
+  return EXERCISE_COLORS[name] || DEFAULT_EXERCISE_COLOR;
+}
+
+// Legend: only needed once more than one exercise shows up in the recent
+// window -- a single exercise is already named in plain text, a colored
+// dot next to just one name would be noise.
+function renderProgressLegend(exerciseNames) {
+  progressExerciseEl.innerHTML = '';
+  if (exerciseNames.length <= 1) {
+    progressExerciseEl.textContent = exerciseNames[0] || '';
+    return;
+  }
+  exerciseNames.forEach((name) => {
+    const item = document.createElement('span');
+    item.style.display = 'inline-flex';
+    item.style.alignItems = 'center';
+    item.style.gap = '4px';
+    item.style.marginRight = '10px';
+    const dot = document.createElement('span');
+    dot.style.width = '10px';
+    dot.style.height = '10px';
+    dot.style.borderRadius = '50%';
+    dot.style.background = exerciseColor(name);
+    item.appendChild(dot);
+    item.appendChild(document.createTextNode(name));
+    progressExerciseEl.appendChild(item);
+  });
+}
+
+function drawProgressChart(history) {
+  const ctx2 = progressCanvas.getContext('2d');
+  const w = progressCanvas.width, h = progressCanvas.height;
+  ctx2.clearRect(0, 0, w, h);
+
+  const recent = history.slice(-5);
+  const maxReps = Math.max(...recent.map((s) => s.reps), 1);
+  const paddingSide = 20;
+  const paddingTop = 34;    // room for the "REPS" axis tag + value labels
+  const paddingBottom = 30; // room for the per-bar date label
+  const barGap = 14;
+  const barW = (w - paddingSide * 2 - barGap * (recent.length - 1)) / recent.length;
+  const chartH = h - paddingTop - paddingBottom;
+
+  ctx2.textAlign = 'left';
+  ctx2.fillStyle = '#7a8785';
+  ctx2.font = 'bold 12px sans-serif';
+  ctx2.fillText(t('reps'), paddingSide, 16);
+
+  ctx2.textAlign = 'center';
+  recent.forEach((session, i) => {
+    const barH = (session.reps / maxReps) * chartH;
+    const x = paddingSide + i * (barW + barGap);
+    const y = h - paddingBottom - barH;
+    ctx2.fillStyle = exerciseColor(session.exercise);
+    ctx2.fillRect(x, y, barW, barH);
+    ctx2.fillStyle = '#2c3e42';
+    ctx2.font = 'bold 15px sans-serif';
+    ctx2.fillText(String(session.reps), x + barW / 2, y - 8);
+    ctx2.font = '12px sans-serif';
+    ctx2.fillText(formatShortDate(session.date), x + barW / 2, h - paddingBottom + 16);
+  });
+}
+
+// Step 5 + language brainstorm: JS computes the facts (name, last rep
+// count), Gemma only supplies warm tone and the target language -- same
+// "JS interprets, Gemma tones" split used for the end-of-session report.
+async function showPersonalizedGreeting() {
+  replayBtn.style.display = 'none';
+  greetingTextEl.textContent = '...';
+
+  const history = userConfig.sessionHistory || [];
+  const lastSession = history[history.length - 1];
+  const showProgress = history.length >= 2;
+
+  progressSectionEl.style.display = showProgress ? 'flex' : 'none';
+  if (showProgress) {
+    drawProgressChart(history);
+    const recent = history.slice(-5);
+    renderProgressLegend([...new Set(recent.map((s) => s.exercise))]);
+    progressCaptionEl.textContent = '...';
+  }
+
+  const hour = new Date().getHours();
+  const timeOfDay = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
+  const facts = `Patient name: ${userConfig.name}. Time of day: ${timeOfDay}.` +
+    (lastSession
+      ? ` Last session they completed ${lastSession.reps} reps.`
+      : ' This is their first session.');
+
+  const greetingPromise = window.rehabAPI.generateGreeting(facts, lang)
+    .catch(() => `${userConfig.name}. ${t('readyToday')}`);
+
+  // Dedicated call so the chart gets its own caption instead of overloading
+  // the spoken greeting with trend commentary too -- same JS-computes-facts/
+  // Gemma-supplies-tone split as everywhere else Gemma is used, just scoped
+  // to the chart's own facts (dates, reps, exercise) rather than raw numbers.
+  let progressPromise = Promise.resolve('');
+  if (showProgress) {
+    const recent = history.slice(-5);
+    const repsList = recent.map((s) => s.reps).join(', ');
+    const trend = recent[recent.length - 1].reps > recent[0].reps
+      ? 'improving'
+      : recent[recent.length - 1].reps < recent[0].reps
+        ? 'declining'
+        : 'steady';
+    const progressFacts = `Exercise: ${[...new Set(recent.map((s) => s.exercise))].join(', ')}. ` +
+      `Rep counts for the last ${recent.length} sessions, oldest to newest: ${repsList} ` +
+      `(an ${trend} trend).`;
+    progressPromise = window.rehabAPI.generateProgressSummary(progressFacts, lang)
+      .catch(() => `${trend === 'improving' ? '+' : trend === 'declining' ? '-' : '~'} ${recent[0].reps} to ${recent[recent.length - 1].reps} reps.`);
+  }
+
+  const [greetingResult, progressResult] = await Promise.all([greetingPromise, progressPromise]);
+  greetingSpeechText = greetingResult;
+  if (showProgress) progressCaptionEl.textContent = progressResult.trim();
+
+  greetingTextEl.textContent = greetingSpeechText;
+  replayBtn.style.display = 'inline-block';
+  speak(greetingSpeechText);
 }
 
 async function initGreeting() {
   userConfig = await window.rehabAPI.loadConfig();
+  lang = (userConfig && userConfig.lang) || 'en';
+  applyStaticStrings();
 
   if (!userConfig || !userConfig.name) {
-    greetingTextEl.textContent = 'What should we call you?';
     nameInputEl.style.display = 'block';
+    langChoiceEl.style.display = 'flex';
+    subPromptEl.style.display = 'block';
+    ageChoiceEl.style.display = 'flex';
     replayBtn.style.display = 'none';
+    greetingTextEl.textContent = t('namePrompt');
     return;
   }
 
-  greetingSpeechText = buildGreetingText(userConfig);
-  greetingTextEl.textContent = greetingSpeechText;
   nameInputEl.style.display = 'none';
-  replayBtn.style.display = 'inline-block';
-  speak(greetingSpeechText);
+  langChoiceEl.style.display = 'none';
+  subPromptEl.style.display = 'none';
+  ageChoiceEl.style.display = 'none';
+  await showPersonalizedGreeting();
 }
 
 startBtn.addEventListener('click', async () => {
@@ -82,7 +300,8 @@ startBtn.addEventListener('click', async () => {
       nameInputEl.focus();
       return;
     }
-    userConfig = { name };
+    if (!selectedAge) return;
+    userConfig = { name, lang, ageRange: selectedAge, sessionHistory: [] };
     await window.rehabAPI.saveConfig(userConfig);
   }
   greetingEl.style.display = 'none';
@@ -92,9 +311,38 @@ startBtn.addEventListener('click', async () => {
 
 replayBtn.addEventListener('click', () => speak(greetingSpeechText));
 
+ageOptionButtons.forEach((btn) => {
+  btn.addEventListener('click', () => {
+    selectedAge = btn.dataset.age;
+    applyStaticStrings();
+  });
+});
+
 resetBtn.addEventListener('click', async () => {
   await window.rehabAPI.resetConfig();
   location.reload();
+});
+
+langOptionButtons.forEach((btn) => {
+  btn.addEventListener('click', () => {
+    lang = btn.dataset.lang;
+    applyStaticStrings();
+  });
+});
+
+langToggleBtn.addEventListener('click', async () => {
+  const idx = LANGUAGES.indexOf(lang);
+  lang = LANGUAGES[(idx + 1) % LANGUAGES.length];
+  if (userConfig) {
+    userConfig.lang = lang;
+    await window.rehabAPI.saveConfig(userConfig);
+  }
+  applyStaticStrings();
+  // Re-fetch the greeting in the new language, but only pre-exercise --
+  // never call Gemma once the camera loop is running (see CLAUDE.md).
+  if (greetingEl.style.display !== 'none' && userConfig && userConfig.name) {
+    await showPersonalizedGreeting();
+  }
 });
 
 // --- Step 2: seated knee extension (right leg: hip 24, knee 26, ankle 28) ---
@@ -216,7 +464,7 @@ function updateExercise(landmarks, now) {
     sessionLog.push(entry);
     console.log('rep complete:', entry, 'sessionLog:', sessionLog);
 
-    formStatus = currentRepMaxAngle >= bestAngle - HYSTERESIS_MARGIN ? 'Good' : 'Try to straighten more';
+    formStatus = currentRepMaxAngle >= bestAngle - HYSTERESIS_MARGIN ? t('formGood') : t('formTryHarder');
 
     repStartTime = now;
     currentRepMinAngle = angle;
@@ -227,17 +475,17 @@ function updateExercise(landmarks, now) {
 function dashboardText() {
   const angleStr = currentAngle !== null ? currentAngle.toFixed(0) + ' deg' : '--';
   const bestStr = bestAngle !== null ? bestAngle.toFixed(0) + ' deg' : '--';
-  return `REPS: ${repCount}\nANGLE: ${angleStr}\nBEST: ${bestStr}\nFORM: ${formStatus}`;
+  return `${t('reps')}: ${repCount}\n${t('angle')}: ${angleStr}\n${t('best')}: ${bestStr}\n${t('form')}: ${formStatus}`;
 }
 
 function statusText() {
   if (appState === 'positioning') {
-    return 'Please sit facing the camera';
+    return t('positioning');
   }
   // appState === 'countdown'
   const remaining = Math.max(0, COUNTDOWN_MS - (performance.now() - countdownStart));
   const n = Math.ceil(remaining / 1000);
-  return n > 0 ? String(n) : 'GO';
+  return n > 0 ? String(n) : t('go');
 }
 
 // --- Step 4: format sessionLog into labelled English for Gemma ---
@@ -279,16 +527,24 @@ async function stopSession() {
   stopBtn.style.display = 'none';
   dashboardEl.style.display = 'none';
   statusEl.style.display = 'block';
-  statusEl.textContent = 'Generating report...';
+  statusEl.textContent = t('generatingReport');
 
   if (userConfig) {
-    userConfig.lastSessionReps = repCount;
+    userConfig.sessionHistory = userConfig.sessionHistory || [];
+    userConfig.sessionHistory.push({
+      date: new Date().toISOString(),
+      exercise: 'Seated Knee Extension',
+      reps: repCount,
+    });
+    // Cap stored history -- only the history surface's chart (last 5) and
+    // the greeting's trend line need recent data, no unbounded growth.
+    userConfig.sessionHistory = userConfig.sessionHistory.slice(-20);
     await window.rehabAPI.saveConfig(userConfig);
   }
 
   const summary = formatSessionSummary(sessionLog);
   try {
-    await window.rehabAPI.generateReport(summary);
+    await window.rehabAPI.generateReport(summary, lang);
     // On success the window navigates to the report page itself, so no
     // further status update runs here -- this renderer context is gone.
   } catch (err) {
@@ -408,4 +664,24 @@ function draw(result) {
   }
 }
 
-initGreeting();
+// Boot sequence (idea from brainstorm): main process starts/health-checks
+// Ollama and warms Gemma, pushing status here so the demo visibly shows
+// the local AI coming up instead of just appearing. Completion is a
+// separate pull (awaitBoot) rather than only a push event, so a reload
+// via the reset or HOME buttons -- which reuses this same window after
+// the one-time boot sequence already finished -- resolves immediately
+// instead of waiting forever for a 'ready' event that won't fire again.
+window.rehabAPI.onBootStatus((status) => {
+  if (status === 'ollama') {
+    greetingTextEl.textContent = 'Starting Ollama...';
+  } else if (status === 'gemma') {
+    greetingTextEl.textContent = 'Starting Gemma...';
+  }
+});
+// startBtn is disabled in HTML by default so it can't be clicked mid-boot
+// (Gemma isn't reachable yet, and userConfig hasn't loaded) -- re-enable it
+// once boot has actually finished.
+window.rehabAPI.awaitBoot().then(() => {
+  startBtn.disabled = false;
+  initGreeting();
+});

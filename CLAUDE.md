@@ -144,7 +144,7 @@ Rehearse twice on the demo machine.
 
 | Screen | Controls |
 |---|---|
-| Greeting | One large **START** button. Small speaker icon to replay. |
+| Greeting | Language + age picker (first run) + One large **START** button. Small speaker icon to replay. Returning users with 2+ sessions also see a small progress chart (see exceptions below). |
 | Exercise | One large **STOP** button. Dashboard overlay. Nothing else. |
 | Report | Opens in the same window. **PRINT REPORT** and **HOME** buttons. |
 
@@ -169,6 +169,54 @@ before recording a demo, so the app comes back up as first-run.
 Deliberately breaks the "words not icons" and sizing rules above; that's
 fine, it's the one control never meant to be used by the person the rest
 of this UI is designed for.
+
+**Exception — language toggle.** A labeled button (current language's
+own name, e.g. "中文"), top-right corner beside the reset dot, present on
+the greeting and exercise screens. (Originally top-left; moved after it
+was found to overlap the full-width status/exercise text there.) Unlike
+the reset button, this one IS for the patient. Tapping it cycles through
+English / Bahasa Melayu / தமிழ் / 中文 — no dropdown, so it doesn't fully
+violate "no dropdowns," but it is a settings control, which the base
+rules above say not to have. Kept anyway because language support only
+works if it's reachable after onboarding, not just chosen once on first
+run.
+
+**Exception — age range picker.** Four large buttons (Under 60 / 60-69 /
+70-79 / 80+), shown once on the first-run screen next to the name and
+language prompts, same button-group pattern as the language picker (no
+dropdown). Unlike language, this is captured once at onboarding only and
+never shown again — it's demographic data for future personalization
+(see [[rehabai-language-support]]-style deferred exercise-selection
+idea), not a live preference the patient needs to re-toggle. Stored as
+`ageRange` in the config JSON alongside `name` and `lang`.
+
+**Exception — history chart (breaks "never more than 3 things" and the
+"no charts" out-of-scope rule).** The returning-user greeting screen adds
+a small canvas bar chart ("YOUR PROGRESS") showing rep counts for the
+last up to 5 sessions, shown only once at least 2 sessions exist. Plain
+`<canvas>`, drawn the same way as the pose overlay — no charting library
+(the locked stack still forbids that). JS computes the bars and the
+improving/declining/steady trend word from real numbers; Gemma is only
+told the trend in words for the spoken greeting (same JS-computes/
+Gemma-tones split as the reports), never asked to interpret raw numbers
+itself. Each bar is colored by which of the three exercises that session
+was (fixed `EXERCISE_COLORS` map in `renderer.js`, not computed — there
+are only ever three), with a small colored-dot legend appearing once a
+second exercise shows up in the recent window. User-authorized deviation
+from the base "3 things on screen" and "no charts" rules — see "Out of
+scope" below for the corresponding narrowing of the out-of-scope list.
+
+**Language support.** English, Malay, Tamil, Mandarin. First run adds a
+language-choice step next to the name prompt; the config JSON stores
+`lang` alongside `name`. Fixed UI chrome (button labels, dashboard
+labels, status text) comes from a static translated dictionary
+(`i18n.js`) — it has to render instantly during the exercise loop, when
+Gemma can't be called. Personalized text (the greeting, both reports)
+is still generated live by Gemma with a "respond only in \<language\>"
+instruction — same JS-computes-facts/Gemma-supplies-tone split as
+everywhere else Gemma is used. Voice pronunciation quality for the
+non-English languages depends on what TTS voices the OS has installed;
+`speechSynthesis` is given the right BCP-47 language tag regardless.
 
 ---
 
@@ -196,8 +244,19 @@ of this UI is designed for.
 **Warm the model on app launch** with a throwaway one-word prompt. Cold
 load is seconds; warm is ~260ms.
 
+**Boot sequence (brainstorm addition).** On launch, main process
+health-checks `http://localhost:11434/`; if Ollama isn't up it spawns
+`ollama serve` and polls until healthy (20s timeout, then continues
+anyway rather than hanging the app). The window opens immediately and
+shows "Starting Ollama..." / "Starting Gemma..." on the greeting screen
+while this runs — makes the local-AI story visible instead of assumed.
+The existing warm-up call above is the "Starting Gemma" step. Completion
+is exposed as a promise (`await-boot` IPC), not just a push event, so
+reloading the same window later (reset button, HOME button) resolves
+instantly instead of waiting on a boot sequence that already finished.
+
 **Never call Gemma while the camera is running.** MediaPipe uses the same
-GPU. Reports generate only afte[118;1:3ur STOP.
+GPU. Reports generate only after STOP.
 
 ---
 
@@ -288,5 +347,16 @@ Behind schedule? Drop in this order:
 ## Out of scope — do not build
 
 Video calls. Login. Accounts. Databases. Emailing the doctor. Cloud
-inference. Past-sessions browser. Charts. Settings screens. Exercise
-prescription logic. Pause button. Mobile. Anything using `z`.
+inference. Settings screens. Exercise prescription logic (fixed 3
+exercises only — no AI-chosen exercises, reps, or dosage). Pause button.
+Mobile. Anything using `z` (outside the documented rep-counting-angle
+exception above).
+
+**Narrowed exceptions (user-authorized, see Controls section above):**
+- ~~Past-sessions browser~~ → in scope, but only as the single small
+  "YOUR PROGRESS" bar chart on the returning-user greeting screen (last
+  5 sessions' rep counts). No dedicated history screen, no per-session
+  drill-down, no scrolling list of every session.
+- ~~Charts~~ → in scope, but only that one bar chart, drawn with plain
+  `<canvas>`. No charting library, no other charts anywhere else in the
+  app (not in the report, which stays plain text per "The two reports").

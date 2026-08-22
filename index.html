@@ -31,7 +31,7 @@
       position: relative;
       transform: scaleX(-1);
     }
-    video, canvas {
+    #stage video, #stage canvas {
       position: absolute;
       top: 0;
       left: 0;
@@ -112,6 +112,10 @@
       color: #fff;
       border: none;
     }
+    #startBtn:disabled {
+      background: var(--muted);
+      cursor: not-allowed;
+    }
     #replayBtn {
       display: none;
       min-width: 60px;
@@ -139,13 +143,140 @@
       z-index: 30;
       cursor: pointer;
     }
+    /* Language toggle IS for the patient -- deliberately larger/clearer
+       than the reset dot. Cycles through the 4 languages on tap; no
+       dropdown, per CLAUDE.md's "no dropdowns" rule. Lives top-right next
+       to the reset dot (not top-left) -- top-left overlapped the status/
+       exercise text on the exercise screen, which spans the full width. */
+    #langToggleBtn {
+      position: fixed;
+      top: 12px;
+      right: 52px;
+      min-width: 90px;
+      min-height: 44px;
+      font: bold 18px sans-serif;
+      background: #fff;
+      color: var(--ink);
+      border: 2px solid var(--ink);
+      z-index: 30;
+      cursor: pointer;
+    }
+    #languageChoice {
+      display: none;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .langOption {
+      min-width: 140px;
+      min-height: 56px;
+      font: bold 20px sans-serif;
+      background: #fff;
+      color: var(--ink);
+      border: 2px solid var(--ink);
+      cursor: pointer;
+    }
+    .langOption.selected {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    /* Age range: same onboarding-only, button-group pattern as the
+       language picker -- captured once next to name, never shown again
+       after (per user decision: not an always-editable toggle like
+       language). Separate class from .langOption purely so the two
+       pickers' selection state can't collide; the CSS is identical. */
+    #subPrompt {
+      display: none;
+      font-size: 24px;
+      font-weight: bold;
+    }
+    #ageChoice {
+      display: none;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .ageOption {
+      min-width: 140px;
+      min-height: 56px;
+      font: bold 20px sans-serif;
+      background: #fff;
+      color: var(--ink);
+      border: 2px solid var(--ink);
+      cursor: pointer;
+    }
+    .ageOption.selected {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    /* History surface (scoped exception to the "no charts" rule -- see
+       CLAUDE.md's "Technical decisions" section for the exact scope):
+       a small canvas bar chart of rep counts across recent sessions,
+       shown only to returning users who have at least 2 sessions logged.
+       Drawn with the same plain-canvas approach as the pose overlay --
+       no charting library, per the locked stack. Fixed bottom-right so
+       it reads as secondary info, not competing with the greeting text
+       and START button for the center of attention. */
+    #progressSection {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      max-width: 340px;
+      text-align: center;
+      z-index: 15;
+    }
+    #progressLabel {
+      font-size: 20px;
+      font-weight: bold;
+      letter-spacing: 1px;
+    }
+    #progressExercise {
+      font-size: 16px;
+      color: var(--muted);
+    }
+    #progressCanvas {
+      background: #fff;
+      border: 2px solid var(--ink);
+    }
+    #progressCaption {
+      font-size: 18px;
+      font-style: italic;
+      max-width: 320px;
+    }
   </style>
 </head>
 <body>
+  <button id="langToggleBtn" title="Change language">EN</button>
+
   <div id="greeting">
     <div id="greetingText">Loading...</div>
+    <div id="languageChoice">
+      <button class="langOption" data-lang="en">English</button>
+      <button class="langOption" data-lang="ms">Bahasa Melayu</button>
+      <button class="langOption" data-lang="ta">தமிழ்</button>
+      <button class="langOption" data-lang="zh">中文</button>
+    </div>
     <input id="nameInput" type="text" placeholder="Your name" />
-    <button id="startBtn">START</button>
+    <div id="subPrompt"></div>
+    <div id="ageChoice">
+      <button class="ageOption" data-age="under60">Under 60</button>
+      <button class="ageOption" data-age="60-69">60-69</button>
+      <button class="ageOption" data-age="70-79">70-79</button>
+      <button class="ageOption" data-age="80+">80+</button>
+    </div>
+    <div id="progressSection">
+      <div id="progressLabel"></div>
+      <div id="progressExercise"></div>
+      <canvas id="progressCanvas" width="320" height="180"></canvas>
+      <div id="progressCaption"></div>
+    </div>
+    <button id="startBtn" disabled>START</button>
     <button id="replayBtn" title="Replay greeting">&#128266;</button>
   </div>
 

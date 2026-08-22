@@ -2,10 +2,31 @@ const { app, BrowserWindow, session, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { spawn } = require('child_process');
 
 // Locked stack (CLAUDE.md): Gemma via Ollama, one place to swap the model name.
 const GEMMA_MODEL = 'gemma4:e2b';
 const GEMMA_URL = 'http://localhost:11434/api/generate';
+const OLLAMA_HEALTH_URL = 'http://localhost:11434/';
+
+// Full names for Gemma's "respond only in X" instruction -- distinct from
+// the native self-names used as UI button labels in i18n.js.
+const GEMMA_LANGUAGE_NAMES = {
+  en: 'English',
+  ms: 'Malay (Bahasa Melayu)',
+  ta: 'Tamil',
+  zh: 'Mandarin Chinese (Simplified)',
+};
+
+// Small duplicate of the report-chrome subset of i18n.js -- main.js is
+// CommonJS and renderer.js's i18n.js is an ES module for the browser, so
+// sharing one file would need a bundler (locked stack forbids one).
+const REPORT_STRINGS = {
+  en: { title: 'RehabAI Report', forYou: 'For you', forClinician: 'For the clinician', print: 'PRINT REPORT', home: 'HOME' },
+  ms: { title: 'Laporan RehabAI', forYou: 'Untuk anda', forClinician: 'Untuk doktor', print: 'CETAK LAPORAN', home: 'LAMAN UTAMA' },
+  ta: { title: 'RehabAI அறிக்கை', forYou: 'உங்களுக்காக', forClinician: 'மருத்துவர்க்காக', print: 'அறிக்கையை அச்சிடு', home: 'முகப்பு' },
+  zh: { title: '康复AI报告', forYou: '为您', forClinician: '给临床医生', print: '打印报告', home: '主页' },
+};
 
 // Step 5: local JSON config -- greeting name + last session's rep count.
 let CONFIG_PATH; // set once app.getPath is available (app.whenReady)
@@ -28,20 +49,42 @@ function resetConfig() {
   } catch {}
 }
 
-const SENIOR_SYSTEM_PROMPT = `You are a warm exercise companion writing directly to the patient who just
+function seniorSystemPrompt(langName) {
+  return `You are a warm exercise companion writing directly to the patient who just
 finished their exercises. Speak in second person, short sentences, no
 medical jargon, no raw numbers or degrees. Based only on the facts given,
 mention one thing that went well and one gentle thing to work on. Never be
-alarming. Three to four sentences, plain text only.`;
+alarming. Three to four sentences. Respond only in ${langName}, plain text
+only.`;
+}
 
-const CLINICIAN_SYSTEM_PROMPT = `You are summarizing an exercise adherence session for a clinician. Be
+function clinicianSystemPrompt(langName) {
+  return `You are summarizing an exercise adherence session for a clinician. Be
 terse and clinical. Use the exact numbers and units given in the facts.
 Output format: one short opening line stating the exercise and rep count,
 then each remaining observation as its own bullet line starting with
 "- ". Note any flagged asymmetry or range-of-motion drop greater than 15%
 from the best rep as its own bullet. State observations only, no advice
-or recommendations. Plain text only, no markdown besides the "- " bullet
-markers.`;
+or recommendations. Respond only in ${langName}, plain text only, no
+markdown besides the "- " bullet markers.`;
+}
+
+function greetingSystemPrompt(langName) {
+  return `You are a warm exercise companion greeting a patient who is about to
+start their prescribed exercises. Based only on the facts given, greet
+them by name, mention their last session's rep count encouragingly if
+given, and ask if they're ready. One to two short sentences. Respond only
+in ${langName}, plain text only, no other language mixed in.`;
+}
+
+function progressSummarySystemPrompt(langName) {
+  return `You caption a small chart of a patient's exercise session history for
+them. Write exactly one short sentence (12 words or fewer) noting the
+trend, warm and encouraging, second person. Based only on the facts
+given -- do not invent numbers not given to you. No greeting, no
+question, just the one observation. Respond only in ${langName}, plain
+text only.`;
+}
 
 async function callGemma(systemPrompt, userPrompt) {
   const res = await fetch(GEMMA_URL, {
@@ -87,12 +130,13 @@ function textToHtml(text) {
   return html;
 }
 
-function buildReportHtml(seniorText, clinicianText) {
+function buildReportHtml(seniorText, clinicianText, lang) {
+  const s = REPORT_STRINGS[lang] || REPORT_STRINGS.en;
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8" />
-<title>RehabAI Report</title>
+<title>${s.title}</title>
 <style>
   body { font: 20px/1.6 sans-serif; background: #fff; color: #111; margin: 40px; }
   h1 { font-size: 32px; margin-bottom: 4px; }
@@ -118,21 +162,21 @@ function buildReportHtml(seniorText, clinicianText) {
 </style>
 </head>
 <body>
-  <h1>RehabAI Report</h1>
+  <h1>${s.title}</h1>
   <p>${new Date().toLocaleString()}</p>
   <div class="columns">
     <div class="column">
-      <h2>For you</h2>
+      <h2>${s.forYou}</h2>
       ${textToHtml(seniorText)}
     </div>
     <div class="column">
-      <h2>For the clinician</h2>
+      <h2>${s.forClinician}</h2>
       ${textToHtml(clinicianText)}
     </div>
   </div>
   <div class="actions">
-    <button id="printBtn" onclick="window.print()">PRINT REPORT</button>
-    <button id="homeBtn" onclick="window.rehabAPI.goHome()">HOME</button>
+    <button id="printBtn" onclick="window.print()">${s.print}</button>
+    <button id="homeBtn" onclick="window.rehabAPI.goHome()">${s.home}</button>
   </div>
 </body>
 </html>`;
@@ -150,6 +194,49 @@ function createWindow() {
   });
 
   win.loadFile('index.html');
+  return win;
+}
+
+async function waitForOllamaHealthy(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(OLLAMA_HEALTH_URL);
+      if (res.ok) return true;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return false;
+}
+
+// Demo-visible boot sequence: shows the greeting screen booting up "its"
+// local AI instead of silently assuming Ollama is already running. Runs
+// once per app launch, but the reset/HOME buttons reload index.html into
+// the SAME window afterwards -- those reloads must not wait on a second
+// round of push events that will never come again, so completion is also
+// exposed as a pull-able promise (see `bootPromise` / 'await-boot' below).
+let resolveBootPromise;
+const bootPromise = new Promise((resolve) => {
+  resolveBootPromise = resolve;
+});
+
+async function bootLocalAi(win) {
+  win.webContents.send('boot-status', 'ollama');
+  let healthy = await waitForOllamaHealthy(1500);
+  if (!healthy) {
+    try {
+      spawn('ollama', ['serve'], { stdio: 'ignore', detached: true }).unref();
+    } catch {}
+    healthy = await waitForOllamaHealthy(20000);
+  }
+
+  win.webContents.send('boot-status', 'gemma');
+  if (healthy) {
+    // Warm the model so the first real call isn't paying cold-load cost.
+    await callGemma('', 'hi').catch(() => {});
+  }
+
+  resolveBootPromise();
 }
 
 app.whenReady().then(() => {
@@ -159,28 +246,38 @@ app.whenReady().then(() => {
     callback(permission === 'media');
   });
 
-  // Warm the model so the first real report call isn't paying cold-load cost.
-  callGemma('', 'hi').catch(() => {});
-
-  createWindow();
+  const win = createWindow();
+  bootLocalAi(win);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
+ipcMain.handle('await-boot', () => bootPromise);
 ipcMain.handle('load-config', () => loadConfig());
 ipcMain.handle('save-config', (event, config) => saveConfig(config));
 ipcMain.handle('reset-config', () => resetConfig());
 ipcMain.handle('go-home', (event) => event.sender.loadFile('index.html'));
 
-ipcMain.handle('generate-report', async (event, formattedSummary) => {
+ipcMain.handle('generate-greeting', async (event, factsText, lang) => {
+  const langName = GEMMA_LANGUAGE_NAMES[lang] || GEMMA_LANGUAGE_NAMES.en;
+  return callGemma(greetingSystemPrompt(langName), factsText);
+});
+
+ipcMain.handle('generate-progress-summary', async (event, factsText, lang) => {
+  const langName = GEMMA_LANGUAGE_NAMES[lang] || GEMMA_LANGUAGE_NAMES.en;
+  return callGemma(progressSummarySystemPrompt(langName), factsText);
+});
+
+ipcMain.handle('generate-report', async (event, formattedSummary, lang) => {
+  const langName = GEMMA_LANGUAGE_NAMES[lang] || GEMMA_LANGUAGE_NAMES.en;
   const [seniorText, clinicianText] = await Promise.all([
-    callGemma(SENIOR_SYSTEM_PROMPT, formattedSummary),
-    callGemma(CLINICIAN_SYSTEM_PROMPT, formattedSummary),
+    callGemma(seniorSystemPrompt(langName), formattedSummary),
+    callGemma(clinicianSystemPrompt(langName), formattedSummary),
   ]);
 
-  const html = buildReportHtml(seniorText, clinicianText);
+  const html = buildReportHtml(seniorText, clinicianText, lang);
   const filePath = path.join(os.tmpdir(), `rehab-report-${Date.now()}.html`);
   fs.writeFileSync(filePath, html);
 

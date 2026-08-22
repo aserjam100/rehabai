@@ -1,0 +1,116 @@
+// Static UI strings for the 4 supported languages. Translated via the
+// local Gemma model and spot-checked, with a couple of manual tweaks
+// where the literal translation didn't fit a UI label (e.g. "go" for a
+// countdown reads better as "start!" than literal "leave").
+//
+// This covers only fixed chrome (buttons, labels, status text) that has
+// to render instantly during the exercise loop, when Gemma can't be
+// called (CLAUDE.md: never call Gemma while the camera is running).
+// Personalized text (greeting, reports) is still generated live by
+// Gemma, just with a "respond only in <language>" instruction.
+
+export const LANGUAGES = ['en', 'ms', 'ta', 'zh'];
+
+// Native self-names, used as button labels -- a language names itself,
+// no translation needed.
+export const LANGUAGE_NAMES = {
+  en: 'English',
+  ms: 'Bahasa Melayu',
+  ta: 'தமிழ்',
+  zh: '中文',
+};
+
+export const STRINGS = {
+  en: {
+    positioning: 'Please sit facing the camera',
+    stop: 'STOP',
+    start: 'START',
+    namePrompt: 'What should we call you?',
+    languagePrompt: 'Choose your language',
+    reps: 'REPS',
+    angle: 'ANGLE',
+    best: 'BEST',
+    form: 'FORM',
+    formGood: 'Good',
+    formTryHarder: 'Try to straighten more',
+    readyToday: 'Ready for today?',
+    namePlaceholder: 'Your name',
+    go: 'GO',
+    generatingReport: 'Generating report...',
+    agePrompt: 'What is your age range?',
+    ageUnder60: 'Under 60',
+    age60to69: '60-69',
+    age70to79: '70-79',
+    age80plus: '80+',
+    progress: 'YOUR PROGRESS',
+  },
+  ms: {
+    positioning: 'Sila duduk menghadap kamera',
+    stop: 'BERHENTI',
+    start: 'MULAKAN',
+    namePrompt: 'Apa nama anda?',
+    languagePrompt: 'Pilih bahasa',
+    reps: 'REPETISI',
+    angle: 'SUDUT',
+    best: 'TERBAIK',
+    form: 'BENTUK',
+    formGood: 'Baik',
+    formTryHarder: 'Cuba luruskan lagi',
+    readyToday: 'Sedia untuk hari ini?',
+    namePlaceholder: 'Nama anda',
+    go: 'MULA',
+    generatingReport: 'Sedang menjana laporan...',
+    agePrompt: 'Apakah julat umur anda?',
+    ageUnder60: 'Di bawah 60',
+    age60to69: '60-69',
+    age70to79: '70-79',
+    age80plus: '80+',
+    progress: 'PERKEMBANGAN ANDA',
+  },
+  ta: {
+    positioning: 'கேமராவை நோக்கி அமருங்கள்',
+    stop: 'நிறுத்து',
+    start: 'தொடங்கு',
+    namePrompt: 'உங்களை எப்படி அழைப்பது?',
+    languagePrompt: 'உங்கள் மொழியைத் தேர்ந்தெடுக்கவும்',
+    reps: 'மீண்டும்',
+    angle: 'கோணம்',
+    best: 'சிறந்தது',
+    form: 'வடிவம்',
+    formGood: 'நல்லது',
+    formTryHarder: 'இன்னும் நேராக இருக்க முயற்சிக்கவும்',
+    readyToday: 'இன்றிற்காக தயாரா?',
+    namePlaceholder: 'உங்கள் பெயர்',
+    go: 'போங்கள்',
+    generatingReport: 'அறிக்கை உருவாக்கப்படுகிறது...',
+    agePrompt: 'உங்கள் வயது வரம்பு என்ன?',
+    ageUnder60: '60 வயதுக்கு கீழ்',
+    age60to69: '60-69',
+    age70to79: '70-79',
+    age80plus: '80+',
+    progress: 'உங்கள் முன்னேற்றம்',
+  },
+  zh: {
+    positioning: '请面向镜头坐好',
+    stop: '停止',
+    start: '开始',
+    namePrompt: '您叫什么名字？',
+    languagePrompt: '选择语言',
+    reps: '次数',
+    angle: '角度',
+    best: '最佳',
+    form: '姿势',
+    formGood: '好',
+    formTryHarder: '再伸直一些',
+    readyToday: '准备好了吗？',
+    namePlaceholder: '您的名字',
+    go: '开始',
+    generatingReport: '生成报告中...',
+    agePrompt: '您的年龄范围是？',
+    ageUnder60: '60岁以下',
+    age60to69: '60-69岁',
+    age70to79: '70-79岁',
+    age80plus: '80岁以上',
+    progress: '您的进展',
+  },
+};
